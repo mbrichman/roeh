@@ -405,3 +405,60 @@ things, not only when they happened.*
   came within one act of memory of losing its own founding sentence. That is not an
   argument against the tool; it is the sharpest available illustration of the gap it
   cannot close on its own.
+
+- **[CORRECTION — to the `[LESSON]` immediately above]** That entry claimed the origin
+  sentence "survived only because the owner kept it and pasted it back," and read the
+  moral as a gap the tool cannot close. **Both halves are wrong.** The owner's correction:
+
+  > *"The quote was mined back from the memory system I built."*
+
+  It was not rescued by human memory. It was **retrieved from the upstream project** —
+  the owner's personal memory system, the one whose decision trace this tool generalises,
+  deliberately not named in this public record. The sentence that commissioned that
+  decision trace was recovered by the system it exists to protect.
+
+  The corrected lesson is the opposite of the recorded one, and stronger: nothing was
+  nearly lost. The apparatus worked. A midnight remark that reached no commit, no doc and
+  no session transcript was captured, held, and handed back eight days later — which is
+  precisely the capability the whole stack exists to provide, demonstrated on its own
+  founding statement.
+
+- **[PRINCIPLE — owner] The recursion, stated exactly.** Earlier entries describe it as
+  "confident re-derivation," which is the symptom. The owner's formulation is the
+  structure:
+
+  > *"The recursion is that I need a memory system for the tool I'm using to build the
+  > memory system."*
+
+  Four layers, each remembering the one below:
+
+  1. **The upstream project** — memory for the owner's own material.
+  2. **Its decision trace** — memory for the work of building it, commissioned
+     2026-08-09 because building it kept losing its own decisions.
+  3. **roeh** — that decision trace generalised into a portable tool, so any project can
+     have layer 2.
+  4. **roeh's own trace** — this file, because building roeh has the same problem.
+
+  The origin entry above closed the loop: layer 1 supplied the primary source for layer 4.
+  This is not a curiosity. It is the strongest evidence in the record that the design is
+  sound, because the only real test of a memory system is whether it can hand back the
+  thing you most needed and had no other copy of.
+
+  GATES: nothing operational — but where §0 and §1 paraphrase "the recursion," this is the
+  authoritative statement and they defer to it.
+
+- **[GOTCHA] This entry was redacted before publication, and the redaction rewrote pushed
+  history.** A first version named layer 1 explicitly. The repo is public, the owner does
+  not want that project associated with it, and an append-only file cannot unpublish a
+  name — so the commit was **amended and force-pushed rather than reverted**, because a
+  revert leaves the original readable in history forever. Three earlier commits still
+  contain the name incidentally, as a synthetic example path (`/Users/x/projects/<name>`)
+  and in lines a later commit deleted; those were left, because scrubbing them means
+  rewriting every SHA in the repo, which would invalidate the 14 commit citations in this
+  trace and 9 release tags — destroying the provenance this file exists to provide, to
+  remove a directory name from a fake path.
+
+  **Append-only protects the record's integrity; it is not a reason to publish something
+  that should not be public.** When the two conflict, redact and say that you did — which
+  is what this entry is. GATES: check for names before appending to a trace in a public
+  repo. `local` mode exists precisely so this trade-off never arises.

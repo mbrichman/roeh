@@ -159,8 +159,8 @@ class TestSlug(RoehCase):
         self.assertEqual(out.strip(), "-Users-x--claude-projects")
 
     def test_worktree_path(self):
-        _, out, _ = self.roeh("slug", "/Users/x/p/scry/.claude/worktrees/wt")
-        self.assertEqual(out.strip(), "-Users-x-p-scry--claude-worktrees-wt")
+        _, out, _ = self.roeh("slug", "/Users/x/p/proj/.claude/worktrees/wt")
+        self.assertEqual(out.strip(), "-Users-x-p-proj--claude-worktrees-wt")
 
 
 class TestProjectRoot(RoehCase):

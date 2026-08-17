@@ -8,6 +8,11 @@ method; everything project-specific lives here.*
 
 ## What this project is
 
+**The recursion, in the owner's words:** *"I need a memory system for the tool I'm using
+to build the memory system."* Four layers — the upstream project (memory for the owner's
+own material, deliberately unnamed in this public repo), its decision trace, roeh (that
+trace generalised), and roeh's own trace. The oracle should understand it is layer 4.
+
 roeh is a Claude Code plugin that gives a project an append-only decision trace, an
 Oracle that answers "why did we do X" from that record with citations, and a scribe that
 writes to it before compaction discards the reasoning. It is generalised from a working
