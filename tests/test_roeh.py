@@ -163,6 +163,55 @@ class TestSlug(RoehCase):
         self.assertEqual(out.strip(), "-Users-x-p-scry--claude-worktrees-wt")
 
 
+class TestProjectRoot(RoehCase):
+    """Root resolution must pick the NEAREST marker.
+
+    The real-world shape that broke: a repo one level below a directory that
+    has both .git and .claude. Since ~/.claude exists for every Claude Code
+    user, an upward-per-marker search sent any repo without its own .claude/
+    to the home directory."""
+
+    def nested_repo(self, parent_markers):
+        parent = os.path.join(self.root, "parent")
+        child = os.path.join(parent, "child")
+        os.makedirs(child)
+        for m in parent_markers:
+            os.makedirs(os.path.join(parent, m), exist_ok=True)
+        subprocess.run(["git", "-C", child, "init", "-q"], capture_output=True)
+        p = subprocess.run([sys.executable, ROEH, "config"], cwd=child,
+                           capture_output=True, text=True, env=self.env())
+        return child, json.loads(p.stdout)["root"]
+
+    def test_child_git_beats_parent_claude(self):
+        child, root = self.nested_repo([".claude"])
+        self.assertEqual(root, child,
+                         "a .claude/ above must not outrank .git/ right here")
+
+    def test_child_git_beats_parent_with_both_markers(self):
+        child, root = self.nested_repo([".git", ".claude"])
+        self.assertEqual(root, child)
+
+    def test_walks_up_when_the_child_has_nothing(self):
+        parent = os.path.join(self.root, "p2")
+        child = os.path.join(parent, "sub", "deep")
+        os.makedirs(child)
+        subprocess.run(["git", "-C", parent, "init", "-q"], capture_output=True)
+        p = subprocess.run([sys.executable, ROEH, "config"], cwd=child,
+                           capture_output=True, text=True, env=self.env())
+        self.assertEqual(json.loads(p.stdout)["root"], parent)
+
+    def test_explicit_config_outranks_a_nearer_bare_marker(self):
+        parent = os.path.join(self.root, "p3")
+        child = os.path.join(parent, "child")
+        os.makedirs(os.path.join(child, ".claude"))
+        os.makedirs(os.path.join(parent, ".claude"))
+        with open(os.path.join(child, ".claude", "roeh.json"), "w") as f:
+            json.dump({"version": 1, "mode": "repo"}, f)
+        p = subprocess.run([sys.executable, ROEH, "config"], cwd=child,
+                           capture_output=True, text=True, env=self.env())
+        self.assertEqual(json.loads(p.stdout)["root"], child)
+
+
 class TestInit(RoehCase):
 
     def test_fresh_init_writes_config(self):

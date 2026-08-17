@@ -71,23 +71,32 @@ def slug_for(path):
 
 
 def find_project_root(start):
-    """Walk up for .claude/roeh.json, then .claude/, then .git/.
+    """Nearest ancestor carrying a project marker.
 
-    Order matters: an explicitly configured project wins over an inferred one,
-    so a repo containing a sub-project with its own config resolves to the
-    sub-project when you are inside it.
+    NEAREST is the whole point, and getting it wrong here is not subtle. An
+    earlier version exhausted each marker upward before trying the next, so a
+    `.claude/` directory several levels up beat a `.git/` sitting in the
+    directory you were standing in. Because `~/.claude` exists for every Claude
+    Code user, that made ANY repo without its own `.claude/` resolve its root
+    to the home directory — writing the config to ~/.claude/roeh.json and
+    aiming the trace at ~/docs/decision-trace.md. Found by running roeh on
+    roeh, which sits one level below a directory that has both markers.
+
+    So: walk up ONE level at a time, checking every marker at that level.
+    Within a level the order is a genuine priority — an explicit config beats
+    a repo boundary, which beats a bare .claude/ directory.
     """
-    cur = os.path.abspath(start)
-    for probe in (os.path.join(".claude", CONFIG_NAME), ".claude", ".git"):
-        d = cur
-        while True:
-            if os.path.exists(os.path.join(d, probe)):
-                return d
-            parent = os.path.dirname(d)
-            if parent == d:
-                break
-            d = parent
-    return cur
+    start = os.path.abspath(start)
+    probes = (os.path.join(".claude", CONFIG_NAME), ".git", ".claude")
+    cur = start
+    while True:
+        for probe in probes:
+            if os.path.exists(os.path.join(cur, probe)):
+                return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return start          # no marker anywhere; stay put, never "/"
+        cur = parent
 
 
 # ------------------------------------------------------------------- config

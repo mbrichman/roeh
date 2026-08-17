@@ -1,0 +1,20 @@
+{
+  "gate": {
+    "enabled": false
+  },
+  "mode": "repo",
+  "precompact": {
+    "block_manual": true,
+    "nag_auto": true
+  },
+  "profile": ".claude/roeh-profile.md",
+  "repo": ".",
+  "sessions_dir": "/Users/dovrichman/.claude/projects/-Users-dovrichman-projects-roeh",
+  "sovereignty": {
+    "local_only": false,
+    "network_forbidden": true
+  },
+  "state": ".claude/roeh-state.json",
+  "trace": "docs/decision-trace.md",
+  "version": 1
+}
