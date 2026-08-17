@@ -56,7 +56,7 @@ def run(args, cwd=None, timeout=15):
 def slug_for(path):
     """Claude Code's project-directory slug: '/' and '.' both become '-'.
 
-    /Users/x/projects/scry        -> -Users-x-projects-scry
+    /Users/x/projects/thing       -> -Users-x-projects-thing
     /Users/x/.claude/projects     -> -Users-x--claude-projects
     """
     return re.sub(r"[/.]", "-", os.path.abspath(path))
@@ -289,7 +289,7 @@ def cmd_status(args):
 def cmd_append(args):
     """The ONLY write path to the trace, and it can only ever append.
 
-    scry's original design forbade the scribe from writing at all, on the
+    The original design forbade the scribe from writing at all, on the
     reasoning that "an agent with write access to an append-only file is one
     bad edit from destroying the record it exists to protect." That reasoning
     is about Write/Edit, which can truncate. This opens the file in 'a' mode
