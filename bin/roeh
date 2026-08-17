@@ -19,6 +19,9 @@ Subcommands:
             (--fix applies the safe repairs; never touches the trace)
   ingest    ingest lifecycle: status | begin | done | end | abandon
             (so an interrupted run is a fact, not a guess)
+  index     regenerate the compact index — read in full at any trace size
+  read      extract one section or chapter exactly: roeh read §1 | 2026-08-12
+  chapters  which chapters match a term (chapter granularity, never lines)
 
 No third-party dependencies, by design: this runs inside hooks, where a
 missing import is a silent failure at the worst possible moment.
@@ -478,6 +481,200 @@ def cmd_slug(args):
 
 INGEST_STALE_AFTER = 6 * 3600  # a run quiet this long is abandoned, not running
 
+# Exactly two hashes. Chapters are `### YYYY-MM-DD`, and a 2-3 hash pattern
+# matched those too, reporting "§2026" as a section — which then produced
+# overlapping, duplicated spans in `chapters` and the index.
+SECTION_RE = re.compile(r"^##(?!#)\s*(?:§\s*)?(\d+)\b.*$", re.M)
+# Any h3 is a chapter. Dated ones are the common case, but a real trace also
+# carries thematic chapters ("### Origin & thesis"), and treating only dates as
+# chapters silently drops them from the index and from `roeh read`.
+CHAPTER_RE = re.compile(r"^###\s+(.+?)\s*$", re.M)
+DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\b")
+
+# Tags appear as `- **[DECISION]**` OR as `` - `[DECISION]` `` — this tool
+# writes the first, the trace it was generalised from writes the second, and an
+# index that recognises only its own dialect under-reports without saying so.
+# That is the worst failure available to an index: it looks complete.
+# `(?!\[)` excludes `[[wikilinks]]`, which are not tags.
+ENTRY_RE = re.compile(
+    r"^\s*[-*]\s+(?:\*\*|`)*\[(?!\[)([A-Z][A-Z0-9 /-]{1,18}?)\s*(?:—[^\]]*)?\]",
+    re.M)
+
+
+def parse_trace(path):
+    """Structural map of the record: sections, dated chapters, tagged entries.
+
+    Everything below — index, read, grep — works from this one parse, so the
+    tools agree with each other about what a "chapter" is. The oracle's
+    degradation ladder is defined in terms of chapters, and a ladder whose
+    rungs are described differently by different commands is not a ladder.
+    """
+    text = open(path, errors="ignore").read()
+    lines = text.splitlines()
+
+    def line_of(pos):
+        return text.count("\n", 0, pos) + 1
+
+    sections = [{"n": m.group(1), "line": line_of(m.start()),
+                 "title": m.group(0).lstrip("# ").strip()}
+                for m in SECTION_RE.finditer(text)]
+    chapters = []
+    for m in CHAPTER_RE.finditer(text):
+        title = m.group(1).strip()
+        d = DATE_RE.match(title)
+        chapters.append({"date": d.group(1) if d else None, "title": title,
+                         "key": d.group(1) if d else title,
+                         "line": line_of(m.start())})
+
+    entries = []
+    for m in ENTRY_RE.finditer(text):
+        ln = line_of(m.start())
+        # Lead clause: the bolded sentence that opens the bullet, which the
+        # scribe is required to write. Truncated hard — the index is only
+        # useful while it stays small enough to read whole.
+        tail = text[m.end():m.end() + 400].split("\n\n")[0].replace("\n", " ")
+        tail = re.sub(r"\s+", " ", tail).lstrip("*: ")
+        lead = tail.split(". ")[0][:110].rstrip(" *")
+        cite = ""
+        cm = re.search(r"Cite[sd]?:\s*(.{0,60})", tail)
+        if cm:
+            cite = cm.group(1).strip().rstrip(".")
+        chapter = max([c for c in chapters if c["line"] <= ln],
+                      key=lambda c: c["line"], default=None)
+        section = max([s for s in sections if s["line"] <= ln],
+                      key=lambda s: s["line"], default=None)
+        entries.append({"tag": m.group(1).strip(), "line": ln, "lead": lead,
+                        "cite": cite,
+                        "chapter": chapter["key"] if chapter else None,
+                        "section": section["n"] if section else None})
+    return {"text": text, "lines": lines, "sections": sections,
+            "chapters": chapters, "entries": entries}
+
+
+def _span(parsed, start_line, kind):
+    """Line range from a heading to the next heading of the same or higher rank."""
+    stops = [s["line"] for s in parsed["sections"] if s["line"] > start_line]
+    if kind == "chapter":
+        stops += [c["line"] for c in parsed["chapters"] if c["line"] > start_line]
+    end = min(stops) - 1 if stops else len(parsed["lines"])
+    return start_line, end
+
+
+def cmd_index(args):
+    """Generate a compact index of the record.
+
+    This is the answer to the record outgrowing a single read. The oracle's
+    ladder says to fall back to reading chapters, but chapter-grepping alone
+    loses the thing a full read actually buys: knowing what exists ELSEWHERE in
+    the file. You cannot grep for what you do not know to look for, and the
+    failure is silent — you get a confident answer sourced from the two
+    chapters you happened to match.
+
+    The index restores that global awareness at a fraction of the size: one
+    line per tagged entry, always read in full at any trace size, with line
+    numbers so `roeh read` can pull the exact chapter afterwards.
+    """
+    cfg = load_config()
+    if not os.path.exists(cfg["trace_abs"]):
+        die(f"no trace at {cfg['trace_abs']}")
+    p = parse_trace(cfg["trace_abs"])
+    out_path = cfg["trace_abs"].rsplit(".", 1)[0] + "-index.md"
+
+    L = ["# INDEX — " + os.path.basename(cfg["trace_abs"]),
+         "",
+         "*Generated by `roeh index`. Do not edit; regenerate.*",
+         "",
+         "**Read this in full before answering, at any trace size.** It is the map",
+         "of what the record contains. Then `roeh read <§N|YYYY-MM-DD>` to pull the",
+         "chapters you actually need. Grepping the trace directly without reading",
+         "this first is how you confidently miss the entry that overturns your answer.",
+         "",
+         f"Trace: {len(p['lines'])} lines · {len(p['chapters'])} chapters · "
+         f"{len(p['entries'])} tagged entries", ""]
+
+    L += ["## Sections", ""]
+    for s in p["sections"]:
+        a, b = _span(p, s["line"], "section")
+        L.append(f"- **§{s['n']}** — lines {a}–{b} · `roeh read §{s['n']}`")
+    L += ["", "## Chapters", ""]
+    for c in p["chapters"]:
+        a, b = _span(p, c["line"], "chapter")
+        n = len([e for e in p["entries"] if e["chapter"] == c["key"]])
+        L.append(f"- **{c['title']}** — lines {a}–{b} · {n} entries · "
+                 f"`roeh read \"{c['key']}\"`")
+
+    # Reversals and corrections first: an entry is only live if nothing later
+    # overturns it, and this is the list that tells you what to check.
+    hot = [e for e in p["entries"]
+           if e["tag"].startswith(("REVERSAL", "CORRECTION", "DEAD-END"))]
+    if hot:
+        L += ["", "## Supersessions and dead-ends — check these before quoting anything", ""]
+        for e in hot:
+            L.append(f"- `{e['tag']}` L{e['line']} ({e['chapter'] or '§'+str(e['section'])}) "
+                     f"— {e['lead']}" + (f" · {e['cite']}" if e["cite"] else ""))
+
+    L += ["", "## All entries", ""]
+    for e in p["entries"]:
+        where = e["chapter"] or f"§{e['section']}"
+        L.append(f"- `{e['tag']}` L{e['line']} ({where}) — {e['lead']}"
+                 + (f" · {e['cite']}" if e["cite"] else ""))
+
+    body = "\n".join(L) + "\n"
+    with open(out_path, "w") as f:
+        f.write(body)
+    print(f"{out_path}\n  {len(L)} lines / {len(body)//1024}KB "
+          f"(trace is {len(p['lines'])} lines / {len(p['text'])//1024}KB)")
+    if len(body) >= len(p["text"]) * 0.6:
+        print("  NOTE: the index is not much smaller than the trace, so it buys "
+              "little.\n        That usually means entries are one-liners — the "
+              "oracle can still read\n        the trace itself, and should.")
+
+
+def cmd_read(args):
+    """Extract one section or dated chapter, exactly. `roeh read §1` / `roeh read 2026-08-12`."""
+    cfg = load_config()
+    if not args:
+        die("usage: roeh read <§N | N | YYYY-MM-DD>")
+    sel = args[0].lstrip("§")
+    p = parse_trace(cfg["trace_abs"])
+    hit = None
+    exact = [c for c in p["chapters"] if c["key"] == sel]
+    fuzzy = [c for c in p["chapters"] if sel.lower() in c["title"].lower()]
+    if exact or (fuzzy and not re.fullmatch(r"\d+", sel)):
+        hit = _span(p, (exact or fuzzy)[0]["line"], "chapter")
+    else:
+        # LAST matching section: append-only means a section is superseded by
+        # appending a new copy, so the first one is the oldest.
+        matches = [s for s in p["sections"] if s["n"] == sel]
+        if matches:
+            hit = _span(p, matches[-1]["line"], "section")
+    if not hit:
+        die(f"no section or chapter matching '{args[0]}'")
+    a, b = hit
+    print("\n".join(p["lines"][a - 1:b]))
+
+
+def cmd_chapters(args):
+    """Chapters whose text matches — chapter granularity, never lines.
+
+    The ladder is explicit that a line-level read is how you confidently return
+    superseded history: a [REVERSAL] almost always lives in a LATER chapter
+    than the entry it overturns, so a grep that returns lines hands back the
+    dead claim without its correction.
+    """
+    cfg = load_config()
+    if not args:
+        die("usage: roeh chapters <term>")
+    term = args[0]
+    p = parse_trace(cfg["trace_abs"])
+    spans = ([("§" + s["n"], _span(p, s["line"], "section")) for s in p["sections"]]
+             + [(c["key"], _span(p, c["line"], "chapter")) for c in p["chapters"]])
+    for name, (a, b) in spans:
+        chunk = "\n".join(p["lines"][a - 1:b])
+        if re.search(re.escape(term), chunk, re.I):
+            n = len(re.findall(re.escape(term), chunk, re.I))
+            print(f"{name}\tlines {a}-{b}\t{n} match(es)\troeh read {name}")
+
 
 def cmd_ingest(args):
     """Ingest lifecycle. An ingest that dies halfway leaves a trace that reads
@@ -677,11 +874,24 @@ def cmd_doctor(args):
                  "the oracle reads it in full at every size; without one it "
                  "cannot tell you what the record already knows is unreliable")
 
-        # The oracle stops reading the whole file past roughly here.
+        # The oracle stops reading the whole file past roughly here, and falls
+        # back to the index. So past the threshold the index is not optional —
+        # without it the oracle greps, and grepping cannot find what it does
+        # not know to look for.
+        idx = cfg["trace_abs"].rsplit(".", 1)[0] + "-index.md"
         if lines > 1500 or kb > 400:
-            warn(f"trace has passed the full-read threshold ({lines} lines / "
-                 f"{kb}KB)", "the oracle now degrades to chapter reads — expect "
-                 "it to say so, and distrust any answer that does not")
+            if not os.path.exists(idx):
+                fail(f"trace is past the full-read threshold ({lines} lines / "
+                     f"{kb}KB) and has NO index",
+                     "run `roeh index` — without it the oracle degrades to "
+                     "grepping, which silently misses what it did not think to "
+                     "search for")
+            elif os.path.getmtime(idx) < os.path.getmtime(cfg["trace_abs"]):
+                warn("index is older than the trace",
+                     "run `roeh index` — entries added since are invisible to "
+                     "the oracle's first pass")
+            else:
+                ok(f"past full-read threshold ({lines} lines), index is current")
 
     # --- ingest completeness ----------------------------------------------
     ing = load_state(cfg).get("ingest") or {}
@@ -839,7 +1049,8 @@ def cmd_pending(args):
 COMMANDS = {"init": cmd_init, "config": cmd_config, "status": cmd_status,
             "append": cmd_append, "sessions": cmd_sessions, "mark": cmd_mark,
             "slug": cmd_slug, "pending": cmd_pending, "doctor": cmd_doctor,
-            "ingest": cmd_ingest}
+            "ingest": cmd_ingest, "index": cmd_index, "read": cmd_read,
+            "chapters": cmd_chapters}
 
 
 def main():

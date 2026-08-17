@@ -440,6 +440,39 @@ second* as the trace write as unrecorded, so a project read as "behind" the inst
 it was recorded — spuriously blocking `/compact`. Earlier manual checks had missed it
 because they happened to include a `sleep 1`.
 
+## What happens when the trace outgrows a single read
+
+The record is append-only, so it only grows. Past roughly **1,500 lines or 400KB** it no
+longer fits one comfortable read — and the naive fallback, grepping, is worse than it
+looks: **you cannot grep for what you do not know to look for.** You get a confident
+answer sourced from the two chapters you happened to match, with no sign of the entry
+that overturns it. Silent, and indistinguishable from a complete answer.
+
+So roeh gives the Oracle an index and retrieval primitives instead of an instruction to
+be careful:
+
+```bash
+roeh index                 # regenerate; ~15% the size of the trace
+roeh chapters "cascade"    # which CHAPTERS match, never which lines
+roeh read 2026-08-12       # pull one chapter, exactly
+roeh read §5               # or one section (the last one, if superseded)
+```
+
+`roeh index` writes `<trace>-index.md`: every tagged entry as one line with its tag, line
+number, chapter and citation, plus a **supersessions and dead-ends** block up front —
+because an entry is only live if nothing later overturns it, and that is the list you
+check before quoting anything. On a real 3,058-line trace the index is ~480 lines. The
+Oracle reads *that* in full at any trace size, which preserves the global awareness a full
+read buys, then pulls only the chapters it needs.
+
+`roeh doctor` **fails** past the threshold if no index exists, and warns if the index is
+older than the trace. Both are the honest signal that the Oracle is about to answer from a
+partial view.
+
+The index parser recognises both tag dialects — `- **[DECISION]**` and `` - `[DECISION]` ``
+— and ignores `[[wikilinks]]`. Recognising only one dialect under-reports without saying
+so, which for an index is the worst available failure: it looks complete.
+
 ## Limitations — read before trusting it
 
 The record is an artifact built from evidence, and it inherits every weakness of that
@@ -465,9 +498,10 @@ evidence. Where it can mislead:
   finds nothing. roeh has this problem about itself, recorded as an `[OPEN]` in its own
   trace.
 
-- **The full read is on a clock.** Past roughly 1,500 lines or 400KB the Oracle degrades
-  from reading the whole record to reading relevant chapters. It is instructed to say so
-  when it does; `roeh doctor` warns you when you cross the line.
+- **The full read is on a clock.** Past roughly 1,500 lines or 400KB the record no longer
+  fits one read. See [What happens when the trace outgrows a single
+  read](#what-happens-when-the-trace-outgrows-a-single-read) — the Oracle falls back to the
+  index, not to grepping, and `roeh doctor` fails if the index is missing.
 
 - **A first ingest on a large history costs real money.** Extraction runs on `sonnet` to
   keep it sane, but a year of commits is still a fan-out. `--quick` exists for a cheap

@@ -92,21 +92,32 @@ often only makes sense next to the principle it serves and the artifact it produ
 Read the whole thing, then answer.
 
 **The full read is on a clock.** The trace is append-only by construction: it only
-grows. When it no longer fits one comfortable read (call it **~400KB or ~1,500 lines**),
-degrade in THIS order — never by sampling lines:
+grows. Past roughly **400KB or 1,500 lines** it no longer fits one comfortable read.
 
-1. **§0, §1 and §5 in full, always.** Small, load-bearing, and §5 is what the asker most
-   often actually needs.
-2. **The contradictions/staleness ledger in full, always** — it is the record's own
-   index of what it knows is unreliable.
-3. **Chapters, never lines.** Grep for the surfaces, the vendor, the failure mode; then
-   read every matching **dated chapter end to end**, plus the chapters either side. A
-   `[REVERSAL]` or `[CORRECTION]` almost always lives in a *later* chapter than the
-   entry it overturns — a line-level read is precisely how you confidently return
-   superseded history as current.
-4. **Say which mode you used.** If you did not read the whole file, state that in one
-   line at the end, naming the chapters you did read. An asker who knows the read was
-   partial can ask you to go deeper; one who assumes it was total cannot.
+When that happens, do NOT start grepping. **You cannot grep for what you do not know to
+look for**, and that failure is silent: you get a confident answer sourced from the two
+chapters you happened to match, with no sign of the entry that overturns it. Use the
+index — that is what it is for:
+
+1. **`roeh index` output, read IN FULL, always.** ~15% the size of the trace and it lists
+   every tagged entry with its line number, chapter and citation. This is what preserves
+   the global awareness a full read gives you. Run `roeh index` first if it is missing or
+   older than the trace.
+2. **§0, §1 and §5 in full, always** — `roeh read §1`. Small, load-bearing, and §5 is
+   what the asker most often actually needs.
+3. **The contradictions/staleness ledger in full, always** — the record's own index of
+   what it knows is unreliable. The index's *"Supersessions and dead-ends"* block is the
+   fast path to the same information.
+4. **Chapters, never lines.** `roeh chapters <term>` returns the chapters that match;
+   `roeh read <chapter>` pulls one end to end. Read the neighbours too. A `[REVERSAL]` or
+   `[CORRECTION]` almost always lives in a *later* chapter than the entry it overturns —
+   a line-level read is precisely how you confidently return superseded history as
+   current.
+5. **Say which mode you used.** If you did not read the whole file, state it in one line
+   at the end, naming the chapters you did read. An asker who knows the read was partial
+   can ask you to go deeper; one who assumes it was total cannot. **This is not optional
+   politeness** — it is the only signal that distinguishes a complete answer from a
+   partial one, and they otherwise look identical.
 
 ### 2. Check for supersession before you quote anything
 

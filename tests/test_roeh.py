@@ -485,6 +485,102 @@ class TestIngestLifecycle(RoehCase):
         self.assertEqual(before, self.read("docs/decision-trace.md"))
 
 
+class TestIndexAndRetrieval(RoehCase):
+    """The answer to a trace outgrowing a single read."""
+
+    def big_trace(self):
+        self.init()
+        body = ["# T", "", "## §1 — Principles", "",
+                "- **[PRINCIPLE]** one. Cite: `aaa1111`.", ""]
+        # Multi-line entries, because that is what a real entry looks like: the
+        # scribe requires the decision, the why, what was rejected, citations
+        # and what it gates. A fixture of one-line bullets would make the index
+        # look worthless, since the index line is longer than the source line.
+        for i in range(40):
+            body += [f"### 2026-09-{i%28+1:02d} — chapter {i}", "",
+                     f"- **[DECISION]** decided thing {i}. WHY: the obvious",
+                     f"  approach failed under load and this one did not.",
+                     f"  REJECTED: the obvious approach, which needed a lock.",
+                     f"  GATES: nothing further. Cite: `sha{i:04d}`.",
+                     f"- `[LESSON]` learned thing {i}. The measurement moved",
+                     f"  from 512 to 128 once the tokenizer changed, and the",
+                     f"  old figure had been quoted twice before anyone checked.", ""]
+        body += ["### 2026-10-01 — later", "",
+                 "- **[REVERSAL — of decided thing 3]** overturned. Cite: `zzz9999`.",
+                 "", "## §5 — Resume state", "", "- **Where we are:** here", ""]
+        self.write("docs/decision-trace.md", "\n".join(body) + "\n")
+
+    def test_index_finds_both_tag_dialects(self):
+        """`- **[TAG]**` and `` - `[TAG]` `` must both count. Recognising only
+        one dialect under-reports silently, which for an index is fatal."""
+        self.big_trace()
+        code, out, _ = self.roeh("index")
+        self.assertEqual(code, 0, out)
+        idx = self.read("docs/decision-trace-index.md")
+        self.assertEqual(idx.count("`DECISION`"), 40)
+        self.assertEqual(idx.count("`LESSON`"), 40, "backtick dialect missed")
+
+    def test_index_does_not_mistake_wikilinks_for_tags(self):
+        self.init()
+        self.make_trace()
+        self.roeh("append", "-", stdin="\n- **[[some-wikilink]]** not a tag\n")
+        self.roeh("index")
+        self.assertNotIn("some-wikilink", self.read("docs/decision-trace-index.md"))
+
+    def test_index_surfaces_supersessions_first(self):
+        self.big_trace()
+        self.roeh("index")
+        idx = self.read("docs/decision-trace-index.md")
+        self.assertIn("Supersessions and dead-ends", idx)
+        head = idx.split("## All entries")[0]
+        self.assertIn("REVERSAL", head, "reversal not surfaced before the bulk")
+
+    def test_index_is_much_smaller_than_the_trace(self):
+        self.big_trace()
+        self.roeh("index")
+        trace = len(self.read("docs/decision-trace.md"))
+        idx = len(self.read("docs/decision-trace-index.md"))
+        self.assertLess(idx, trace, "an index bigger than the trace is useless")
+
+    def test_read_extracts_one_chapter_exactly(self):
+        self.big_trace()
+        _, out, _ = self.roeh("read", "2026-10-01")
+        self.assertIn("overturned", out)
+        self.assertNotIn("decided thing 0", out, "bled into a neighbouring chapter")
+
+    def test_read_extracts_a_section(self):
+        self.big_trace()
+        _, out, _ = self.roeh("read", "§5")
+        self.assertIn("Where we are", out)
+        self.assertNotIn("[DECISION]", out)
+
+    def test_chapters_returns_chapter_granularity(self):
+        """A [REVERSAL] usually lives in a LATER chapter than what it
+        overturns, so line-level results hand back dead claims."""
+        self.big_trace()
+        _, out, _ = self.roeh("chapters", "overturned")
+        self.assertIn("2026-10-01", out)
+        self.assertIn("roeh read", out, "must tell the caller how to pull it")
+
+    def test_doctor_fails_past_threshold_without_an_index(self):
+        self.big_trace()
+        body = self.read("docs/decision-trace.md")
+        self.write("docs/decision-trace.md", body + ("\n- filler" * 1600))
+        code, out, _ = self.roeh("doctor")
+        self.assertEqual(code, 1)
+        self.assertIn("NO index", out)
+
+    def test_doctor_warns_when_the_index_is_stale(self):
+        self.big_trace()
+        body = self.read("docs/decision-trace.md")
+        self.write("docs/decision-trace.md", body + ("\n- filler" * 1600))
+        self.roeh("index")
+        time.sleep(1.1)
+        self.roeh("append", "-", stdin="\n- **[DECISION]** later thing.\n")
+        _, out, _ = self.roeh("doctor")
+        self.assertIn("index is older than the trace", out)
+
+
 class TestDoctor(RoehCase):
 
     def healthy(self):
