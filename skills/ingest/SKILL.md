@@ -45,12 +45,30 @@ exceeds the marginal recall. With `--quick`, skip the split and run one sequenti
 
 Dispatch in parallel:
 
-| Agent | Job |
-|---|---|
-| **C1…Cn** | one dated chapter each — commits, diffs, and above all inline comments |
-| **M** | memory rehydration — every memory file read IN FULL, clustered, cross-linked, with a contradictions ledger |
-| **A** | artifact index — docs, scripts, evals, key modules: what each IS, why it exists, its gotchas |
-| **S** | session mining — the largest unmined transcripts (see below) |
+| Agent | Job | Model |
+|---|---|---|
+| **C1…Cn** | one dated chapter each — commits, diffs, and above all inline comments | `sonnet` |
+| **M** | memory rehydration — every memory file read IN FULL, clustered, cross-linked, with a contradictions ledger | `sonnet` |
+| **A** | artifact index — docs, scripts, evals, key modules: what each IS, why it exists, its gotchas | `sonnet` |
+| **S** | session mining — the largest unmined transcripts (see below) | *inherit* |
+
+### Why the models differ — do not "upgrade" this
+
+**Extraction runs on `sonnet`.** C/M/A are bounded retrieval: read this range, quote
+the rationale that is already written down, return it tagged and cited. The source text
+does the reasoning; the agent transcribes and organises it. This is the split the
+original archaeology used — six Sonnet agents produced the trace this tool generalises —
+and paying frontier rates for transcription buys nothing while making a first ingest
+expensive enough that people skip it.
+
+**Session mining inherits the session model** (do not pin it down). It is the one pass
+that requires real judgement: deciding what in a transcript is a *net-new* learning
+against a trace you must hold in full, and applying the hall-of-mirrors rule to
+material where the owner's turns and the assistant's are interleaved. Getting that
+wrong writes the system's own reflection into the record as history.
+
+If the caller's session is pinned to a small model, say so in the report — the session
+mining will be weaker than the rest and the owner should know which pass to distrust.
 
 ### Every subagent prompt MUST carry these, verbatim in spirit
 

@@ -11,6 +11,12 @@ asks *"is what we wrote down still true?"* — which is the harder and more valu
 A stale record is more dangerous than no record, because an answer sourced from it reads
 exactly like an answer sourced from a current one. That asymmetry is why this exists.
 
+**Model policy:** the delta mining in Phase 1 is extraction and runs on `sonnet`. **The
+drift check in Phase 2 does NOT** — run it inline, or on the session model. Deciding
+whether a recorded claim is *still true* is judgement against evidence, not retrieval,
+and it is the pass whose silent failure mode is the worst available: reporting a record
+as verified when it was only skimmed.
+
 ## Phase 0 — what is behind
 
 ```
@@ -24,7 +30,8 @@ citations that still look valid.
 
 ## Phase 1 — fold in what's new
 
-Same rules as `/roeh:ingest`, scoped to the delta:
+Same rules as `/roeh:ingest`, scoped to the delta. **Dispatch commit and memory mining
+on `sonnet`** — it is bounded extraction, same as ingest. Session mining inherits.
 
 - **Commits** — mine inline comments and docstrings for rationale, not the subject lines.
 - **Transcripts** — distil to the owner's turns only; the assistant's own text is never a

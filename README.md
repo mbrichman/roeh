@@ -85,6 +85,26 @@ ways it could quietly start lying:
   record, because an answer sourced from it reads exactly like an answer sourced from a
   current one.
 
+## Models
+
+Deliberate, and split along one line: **judgement is pinned, extraction is cheap.**
+
+| Component | Model | Why |
+|---|---|---|
+| `oracle` | **`opus`** (pinned) | Its two hardest jobs fail *quietly*: noticing a later `[REVERSAL]` supersedes the entry it is about to quote, and refusing to supply a rationale the record does not contain. A gate that fails softly is worse than no gate. |
+| `scribe` | **`opus`** (pinned) | Dispatched unattended by the pre-compaction gate, writing to a file that cannot be cleaned up. A fabricated rationale is permanent — only supersedable, after the Oracle has already cited it. |
+| ingest chapter / memory / artifact passes | `sonnet` | Bounded extraction. The source text does the reasoning; the agent transcribes and cites it. The original archaeology ran six Sonnet agents and produced the trace this generalises. |
+| ingest & refresh session mining | *inherits* | The one pass needing real judgement — what is *net-new* against a full trace, and the hall-of-mirrors rule on interleaved turns. |
+| refresh drift check | *inherits* | "Is this recorded claim still true" is judgement against evidence, not retrieval. |
+
+The two agents are pinned by **alias**, not version, so they track the current Opus.
+
+> **If your org pins Claude to a smaller model by default**, that is exactly why these
+> two are pinned rather than inheriting — otherwise the Oracle and scribe are silently
+> downgraded and you cannot tell from their output. If your org *restricts* rather than
+> defaults, the pin will fail to resolve and the agents fall back; check that before
+> relying on a `VERDICT:` as a gate.
+
 ## Hooks
 
 | Event | Behaviour |
