@@ -129,6 +129,23 @@ mining will be weaker than the rest and the owner should know which pass to dist
 - **Mine the inline comments and docstrings, not just the diff or the subject line.**
   The commit message says *what*; the code comment says *why*. This is the single
   highest-yield instruction in the whole pass — quote the rationale with a `file:line`.
+
+- **Read the comment AT THE COMMIT (`git show <sha>`), never at HEAD.** This matters more
+  than it looks. **Comments go stale**: code changes, the comment above it does not, and
+  a rationale that was true in March is quietly describing something that no longer
+  exists. Reading at the commit that introduced the change is the mitigation — at that
+  moment the author wrote the code and the comment together, so they are maximally in
+  sync. A comment read at HEAD carries an unknown amount of drift; the same comment read
+  at its own commit is a dated statement of intent.
+
+  So cite comment-sourced claims as **`file:line@sha`** — the pointer *and* the commit it
+  was true at. An entry that says "because Y (`walk.py:88@a1b2c3d`)" is making a claim
+  about what was believed at `a1b2c3d`, which stays true forever, rather than a claim
+  about what the code does now, which may not.
+
+- **If the comment and the code it sits above already disagree at that commit, say so.**
+  That is a `[GOTCHA]` worth recording, and it is a signal about how much the rest of
+  this file's comments can be trusted.
 - **Capture DECISIONS, DEAD-ENDS, REVERSALS, LESSONS — with rationale**, not a changelog.
   A restatement of what changed is worthless; the record already has the diff.
 - **What was REJECTED and why** wherever the evidence shows an option was weighed.

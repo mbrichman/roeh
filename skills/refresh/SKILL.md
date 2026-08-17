@@ -49,13 +49,35 @@ This is reconciliation proper. Work through the trace's own citations:
 1. **Do the `file:line` pointers still resolve?** `Read` a sample across chapters —
    weighted toward the entries the profile lists as LIVE, since those are the ones the
    oracle leads with. A pointer into code that has moved or been deleted is a finding.
-2. **Do the recorded claims still hold?** Where an entry states an invariant, a schema
+
+2. **Comment-sourced entries first — they decay fastest.** Any entry citing
+   `file:line@sha` took its rationale from an inline comment. **Comments go stale:**
+   humans routinely change code without touching the comment above it, so the rationale
+   the record captured may now describe something that no longer exists. Check each one
+   against HEAD and sort the result into three, because they mean different things:
+
+   - **Comment and code both unchanged** — the entry is live. Nothing to do.
+   - **Code changed, comment did not** — the *comment* is now stale, but the entry may
+     not be. It recorded what was believed at `<sha>`, and that stays true. What is
+     missing is the later decision that changed the code. Write a `[REVERSAL]` for the
+     change nobody recorded, and note the stale comment as a `[GOTCHA]` so the next
+     reader does not trust it. **This is the case that matters most** — a divergence
+     between a comment and the code beneath it is usually an unrecorded decision, which
+     is exactly what this tool exists to catch.
+   - **Comment removed or rewritten** — someone deliberately revised the rationale.
+     Read the new one and record a `[CORRECTION]` if it contradicts the entry.
+
+   Never silently "update" an entry to match a new comment. The record shows what was
+   believed and when; a comment that changed is a second data point, not a replacement
+   for the first.
+
+3. **Do the recorded claims still hold?** Where an entry states an invariant, a schema
    shape, a threshold or a measurement, check it against the current code. A recorded
    number that reality has moved past is the highest-value `[CORRECTION]` you can write.
-3. **Has anything recorded been silently reversed by later work?** A decision implemented
+4. **Has anything recorded been silently reversed by later work?** A decision implemented
    one way and quietly rebuilt another way leaves the original entry reading as live.
    That needs a `[REVERSAL]` naming the entry it overturns.
-4. **Does the staleness ledger still describe reality?** Resolved contradictions should
+5. **Does the staleness ledger still describe reality?** Resolved contradictions should
    be marked resolved — with a cite — not deleted.
 
 ## Phase 3 — write

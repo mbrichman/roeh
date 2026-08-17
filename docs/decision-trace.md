@@ -257,3 +257,29 @@ commit bodies are the primary source and are mined directly.
   - A `roeh update` command — the harness owns this (`20914b6`).
   - Whether `init --force` should reset — no (`d58d4e6`).
   - Whether prompt evals belong in `tests/run` — no (`b70483e`).
+
+- **[DECISION] Comment-sourced rationale is read at its commit, never at HEAD, and cited
+  `file:line@sha`.** WHY: the honest objection to mining comments is that they go stale —
+  humans change code and leave the comment above it untouched. Reading at the commit that
+  introduced the change is the mitigation: at that moment the author wrote code and
+  comment together, so they are maximally in sync, and the citation becomes a durable
+  claim about what was *believed then* rather than a fragile one about what the code does
+  *now*. REJECTED: mining comments at HEAD (fastest to implement, silently accumulates
+  drift), and dropping comments as a source (they remain the highest-yield rationale in
+  most repos). GATES: `/roeh:refresh` must check comment-sourced entries first.
+  Cite: `skills/ingest/SKILL.md` §"Every subagent prompt MUST carry these".
+
+- **[LESSON] A comment that has drifted from its code is usually an unrecorded decision.**
+  The property that makes comments unreliable as a *live* source makes them a tripwire as
+  a *historical* one: if the record says "X because Y" citing a comment, and HEAD no
+  longer does X, something changed and nobody wrote it down. `/roeh:refresh` now sorts
+  comment drift into three outcomes — unchanged (live), code-changed-comment-didn't
+  (`[REVERSAL]` for the unrecorded change plus `[GOTCHA]` for the stale comment), and
+  comment-rewritten (`[CORRECTION]` if it contradicts). Cite: `skills/refresh/SKILL.md`
+  Phase 2 step 2.
+
+- **[CORRECTION — to the README's claim that comments are "maintained under review"]**
+  They are not, reliably; reviewers skim them. The claim was removed rather than softened,
+  and replaced with the mechanism that actually holds: read-at-commit plus a drift check.
+  A README limitations section now states what is NOT fixed — a comment wrong when
+  written, or aspirational, is recorded faithfully as what someone believed.

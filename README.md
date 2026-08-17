@@ -69,19 +69,50 @@ inline: the docstring that quotes a design ruling, the comment explaining why th
 approach doesn't work, the `# NOTE:` above a guard that exists because of an outage
 nobody wrote up.
 
-That material is:
+That material is **written at the moment of the decision**, by the person making it, with
+the context still loaded — not reconstructed later from memory — and it is **attached to
+the exact line it explains**, so it cites itself.
 
-- **Written at the moment of the decision**, by the person making it, with the context
-  still loaded — not reconstructed later from memory.
-- **Maintained under review**, unlike a commit message, which is written once and never
-  revisited.
-- **Attached to the exact line it explains**, so it cites itself. Every entry roeh
-  extracts from it carries a `file:line`.
+#### But comments go stale — and that shapes how they're read
 
-So every chapter agent is told, non-negotiably: *mine the inline comments and docstrings
-at each commit, not just the diff lines or the subject line* — and quote that rationale
-with a pointer. An entry sourced from a comment is the strongest kind in the file,
-because a future session can go read the comment.
+This is the honest objection to the whole approach, and it is correct: humans change code
+and leave the comment above it untouched, sometimes forever. A rationale that was true in
+March can end up quietly describing something that no longer exists. Any tool that mines
+comments naively will confidently report fiction.
+
+Two things make this workable, and neither is a claim that the problem doesn't exist.
+
+**Comments are read at their commit, never at HEAD.** Chapter agents use `git show <sha>`,
+so they read the comment as it was written *when the change was made* — the one moment the
+author wrote code and comment together and they were maximally in sync. Comment-sourced
+claims are cited as **`file:line@sha`**: the pointer *and* the commit it was true at. That
+turns a fragile claim about what the code does *now* into a durable claim about what was
+believed *then*, which stays true regardless of what happened afterwards.
+
+**Drift is the signal, not just the noise.** `/roeh:refresh` checks comment-sourced
+entries first, precisely because they decay fastest, and sorts what it finds:
+
+| Found | Means |
+|---|---|
+| Comment and code both unchanged | Entry is live. |
+| **Code changed, comment did not** | The comment is stale — but the entry isn't wrong, it's *incomplete*. Something changed the code and nobody recorded it. That gets a `[REVERSAL]`, and the stale comment gets a `[GOTCHA]`. |
+| Comment rewritten | Someone revised the rationale deliberately. Read it; `[CORRECTION]` if it contradicts. |
+
+That middle row is the interesting one. **A comment that has drifted from its code is
+usually an unrecorded decision**, which is the exact thing this tool exists to surface. The
+staleness that makes comments unreliable as a live source makes them a useful tripwire as
+a historical one.
+
+**What this does not fix:** a comment that was wrong *when it was written*, or aspirational
+("this will be replaced by…" — it never was). Nothing recovers that, and roeh will record
+it faithfully as what someone believed at the time. Which is, at least, what it claims to
+be recording.
+
+One observation from using this in anger: **AI-written comments drift less**, because the
+agent rewriting a function tends to rewrite its comment in the same pass. On a codebase
+built substantially with a coding agent — increasingly the case, and roeh's likely home —
+the source is fresher than the general reputation of code comments suggests. On a
+decade-old human codebase, weight commit messages and transcripts higher.
 
 ### The hall-of-mirrors rule
 
@@ -393,6 +424,43 @@ The suite found a fourth on its first run: `status` counted a commit made in the
 second* as the trace write as unrecorded, so a project read as "behind" the instant after
 it was recorded — spuriously blocking `/compact`. Earlier manual checks had missed it
 because they happened to include a `sleep 1`.
+
+## Limitations — read before trusting it
+
+The record is an artifact built from evidence, and it inherits every weakness of that
+evidence. Where it can mislead:
+
+- **Comments go stale.** The big one, addressed at length
+  [above](#but-comments-go-stale--and-that-shapes-how-theyre-read): mined at their commit
+  rather than at HEAD, cited as `file:line@sha`, and re-checked by `/roeh:refresh`. But a
+  comment that was wrong when written is recorded as written.
+
+- **It records what was *believed*, not what was *true*.** A `[DECISION]` faithfully
+  captures reasoning that may have been mistaken. That is the intended behaviour — you
+  need to know why something was done in order to overturn it — but it means the trace is
+  a history, not an oracle about reality. The Oracle's name is a joke about consulting it,
+  not a claim about omniscience.
+
+- **Garbage in.** A repo with `wip` commit messages, no comments and no docs yields a thin
+  trace, and ingest cannot conjure rationale that was never written down anywhere. The
+  first run's report tells you what it *couldn't* source — read that part.
+
+- **Transcripts are filed by working directory.** If you work on a project from outside its
+  own directory, its session transcripts sit under a different slug and session mining
+  finds nothing. roeh has this problem about itself, recorded as an `[OPEN]` in its own
+  trace.
+
+- **The full read is on a clock.** Past roughly 1,500 lines or 400KB the Oracle degrades
+  from reading the whole record to reading relevant chapters. It is instructed to say so
+  when it does; `roeh doctor` warns you when you cross the line.
+
+- **A first ingest on a large history costs real money.** Extraction runs on `sonnet` to
+  keep it sane, but a year of commits is still a fan-out. `--quick` exists for a cheap
+  first look.
+
+- **The prompt layer is not deterministic.** `tests/eval-prompts` pins the mechanical
+  contracts — the `VERDICT:` line, supersession, surfacing dead-ends, admitting silence —
+  but the quality of any given answer depends on the model.
 
 ## License
 
