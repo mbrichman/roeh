@@ -217,6 +217,63 @@ project-aware without editing them: this project's vocabulary, its principles di
 the table of **live dead-ends** the Oracle leads with. The agent definitions hold only the
 invariant method.
 
+## Tests
+
+Two tiers, split by what they cost.
+
+**Deterministic** — the CLI and the hooks. Free, fast, no model. Run on every commit and
+in CI on Linux and macOS:
+
+```bash
+tests/run                                  # suite + manifest validation
+python3 -m unittest discover -s tests -v
+```
+
+62 cases covering slug computation, init and its refusals, status, append, the
+pre-compaction sentinel, the ingest lifecycle, `doctor`, both hooks, and structural
+checks on the shipped manifests. Tests drive the CLI as a **subprocess**, because the
+exit code *is* the contract — `PreCompact` blocking compaction is `exit 2` and nothing
+else, and a test that imported the module would pass while the real integration was
+broken.
+
+`HOME` is sandboxed per test. roeh resolves transcripts, the memory directory and
+`local`-mode traces through `~`, so without that the suite deposits directories in your
+real `~/.claude` tree — an early version of it did exactly that.
+
+**Prompt contracts** — the agents. Calls a model, so it costs money and is opt-in:
+
+```bash
+tests/eval-prompts               # all cases
+tests/eval-prompts --case verdict
+```
+
+Each case asserts a *mechanical* property against a fixture trace, never a judgement
+about answer quality — quality drifts with the model, but these contracts are what other
+code depends on:
+
+| Case | Contract |
+|---|---|
+| `verdict` | Gate mode opens with `VERDICT: <one of five words>` on line one. The single most-failed instruction in the Oracle, by its own docs. |
+| `supersede` | A `[CORRECTION]`-superseded figure is not returned as current. The one way the Oracle actively misleads — and it arrives wearing citations. |
+| `deadend` | A recorded `[DEAD-END]` is surfaced, not silently re-walked. |
+| `notrecorded` | Silence is reported as silence rather than filled with a plausible rationale. |
+
+`claude plugin eval` is the eventual home for this tier — it has graders, ablation
+baselines and cost ceilings — but it is in early access at time of writing.
+
+### Why this exists
+
+Three real bugs shipped here before the suite did, and all three had the same shape: **a
+guard that was written but never exercised.** `SCHEMA_VERSION` was stamped into every
+config and never read back. `last_ingest` was declared in the state dict and never
+written. `init --force` reset the config wholesale, silently downgrading a
+sovereignty-critical `local` project to `repo` and orphaning its record.
+
+The suite found a fourth on its first run: `status` counted a commit made in the *same
+second* as the trace write as unrecorded, so a project read as "behind" the instant after
+it was recorded — spuriously blocking `/compact`. Earlier manual checks had missed it
+because they happened to include a `sleep 1`.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
