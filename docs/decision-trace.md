@@ -447,17 +447,6 @@ things, not only when they happened.*
   GATES: nothing operational — but where §0 and §1 paraphrase "the recursion," this is the
   authoritative statement and they defer to it.
 
-- **[GOTCHA] This entry was redacted before publication, and the redaction rewrote pushed
-  history.** A first version named layer 1 explicitly. The repo is public, the owner does
-  not want that project associated with it, and an append-only file cannot unpublish a
-  name — so the commit was **amended and force-pushed rather than reverted**, because a
-  revert leaves the original readable in history forever. Three earlier commits still
-  contain the name incidentally, as a synthetic example path (`/Users/x/projects/<name>`)
-  and in lines a later commit deleted; those were left, because scrubbing them means
-  rewriting every SHA in the repo, which would invalidate the 14 commit citations in this
-  trace and 9 release tags — destroying the provenance this file exists to provide, to
-  remove a directory name from a fake path.
-
   **Append-only protects the record's integrity; it is not a reason to publish something
   that should not be public.** When the two conflict, redact and say that you did — which
   is what this entry is. GATES: check for names before appending to a trace in a public

@@ -305,6 +305,21 @@ The two agents are pinned by **alias**, not version, so they track the current O
 | `SessionStart` *(compact/clear/fork)* | Re-injects the trace pointer and **§5 RESUME STATE** verbatim. This is the half that makes an append-only record *work* — writing it is pointless if nothing reads it back. |
 | `SessionStart` *(startup/resume)* | Cheap staleness line, plus the standing instruction to consult the oracle before re-deriving anything. |
 
+### Read-only mode
+
+For a project with a mature, hand-curated record that no unattended agent should append
+to, set in `.claude/roeh.json`:
+
+```json
+"precompact": { "record": false, "block_manual": false, "nag_auto": true }
+```
+
+`record: false` withholds the sentinel the scribe reads, so the scribe still runs but
+finds nothing pending and returns **draft** entries instead of writing them. You stay the
+only writer. `roeh append` keeps working — the line is drawn at automation, not at
+writing. `block_manual: false` stops roeh from blocking `/compact`, which matters if the
+project already has its own compaction hook and you do not want two gates.
+
 Hook handlers within one event have no documented execution order, so the design is
 order-independent: the command hook drops a sentinel the scribe reads (`roeh pending`),
 and if the scribe runs first, its `roeh append` makes the record current so the blocking

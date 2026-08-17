@@ -99,9 +99,34 @@ def main():
         "silence should be a judgement, not an oversight."
     )
 
+    pc = st.get("precompact") or {}
+
     # Drop the sentinel BEFORE deciding to block. Hook handlers inside one
     # event have no documented order, so this must be readable by the scribe
     # whether it is dispatched before or after this script runs.
+    #
+    # `record: false` withholds it deliberately. The scribe is still dispatched
+    # by hooks.json — that entry is plugin-level and cannot be disabled per
+    # project — but with no sentinel it finds nothing pending and stays in
+    # DRAFT mode, returning entries instead of appending them. That is the
+    # read-only posture: a project with a hand-curated record gets the reminder
+    # and the draft, and keeps a human as the only writer.
+    if not pc.get("record", True):
+        out({
+            "systemMessage": (
+                f"⚠️  trace is behind: {len(commits)} commit(s) — read-only "
+                "mode, nothing will be written automatically"),
+            "hookSpecificOutput": {
+                "hookEventName": "PreCompact",
+                "additionalContext": context + (
+                    "\n\nREAD-ONLY: this project sets `precompact.record: false`. "
+                    "Do NOT append to the trace automatically. If you dispatch "
+                    "the scribe, it will return DRAFT entries — surface them to "
+                    "the owner and let them decide what lands. `roeh append` "
+                    "remains available for anything they approve."),
+            },
+        })
+
     try:
         subprocess.run([sys.executable, os.path.join(HERE, "roeh"),
                         "pending", "--write"], cwd=cwd, text=True, timeout=10,
@@ -114,7 +139,14 @@ def main():
     except Exception:
         pass
 
-    blocking = (trigger == "manual" and not os.environ.get("ROEH_SKIP"))
+    # Honour the config. These two keys were written into every config from the
+    # first version and never read — a gate whose knob does nothing is worse
+    # than a gate with no knob, because the owner believes they turned it off.
+    blocking = (trigger == "manual"
+                and pc.get("block_manual", True)
+                and not os.environ.get("ROEH_SKIP"))
+    if trigger == "auto" and not pc.get("nag_auto", True):
+        out({})
     if blocking:
         # exit 2 blocks compaction; stderr is what the user and model see.
         print(

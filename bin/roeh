@@ -127,7 +127,12 @@ def default_config(root, mode="repo"):
         "repo": ".",
         "sessions_dir": os.path.join(
             os.path.expanduser("~/.claude/projects"), slug_for(root)),
-        "precompact": {"block_manual": True, "nag_auto": True},
+        # `record: false` is the read-only posture: consult the record, never
+        # let automation write to it. Intended for a mature trace that someone
+        # has curated by hand and does not want an unattended agent appending
+        # to. `roeh append` still works — the line is drawn at automation, not
+        # at writing.
+        "precompact": {"block_manual": True, "nag_auto": True, "record": True},
         "sovereignty": {"local_only": mode == "local",
                         "network_forbidden": True},
         "gate": {"enabled": False},
@@ -263,6 +268,8 @@ def status(cfg):
                               "path": s["path"]} for s in unmined],
         "memory_changed": mem_changed,
         "behind": bool(commits or unmined or mem_changed),
+        # Surfaced here so the hooks need one call, not two.
+        "precompact": cfg.get("precompact", {}),
     }
 
 

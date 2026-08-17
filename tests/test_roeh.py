@@ -619,6 +619,51 @@ class TestPreCompactHook(RoehCase):
                                env={"ROEH_SKIP": "1"})
         self.assertEqual(code, 0)
 
+    def test_config_can_disable_the_manual_block(self):
+        """These knobs were written into every config and never read for five
+        versions. A gate whose switch does nothing is worse than no switch."""
+        self.init()
+        self.make_trace()
+        self.commit()
+        self.set_config(precompact={"block_manual": False, "nag_auto": True,
+                                    "record": True})
+        code, _, _ = self.hook(PRECOMPACT, {"trigger": "manual"})
+        self.assertEqual(code, 0, "block_manual: false was ignored")
+
+    def test_config_can_silence_the_auto_nag(self):
+        self.init()
+        self.make_trace()
+        self.commit()
+        self.set_config(precompact={"block_manual": True, "nag_auto": False,
+                                    "record": True})
+        code, out, _ = self.hook(PRECOMPACT, {"trigger": "auto"})
+        self.assertEqual(code, 0)
+        self.assertSilent(out, "nag_auto: false was ignored")
+
+    def test_read_only_mode_withholds_the_sentinel(self):
+        """record:false keeps a human as the only writer — the scribe still
+        runs but finds nothing pending, so it drafts instead of appending."""
+        self.init()
+        self.make_trace()
+        self.commit()
+        self.set_config(precompact={"block_manual": True, "nag_auto": True,
+                                    "record": False})
+        code, out, _ = self.hook(PRECOMPACT, {"trigger": "manual"})
+        self.assertEqual(code, 0, "read-only must never block")
+        ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("READ-ONLY", ctx)
+        self.assertEqual(self.roeh("pending")[0], 1,
+                         "sentinel was written despite record:false")
+
+    def test_read_only_still_allows_manual_append(self):
+        """The line is drawn at automation, not at writing."""
+        self.init()
+        self.make_trace()
+        self.set_config(precompact={"record": False})
+        code, _, _ = self.roeh("append", "-", stdin="\n- deliberate entry\n")
+        self.assertEqual(code, 0)
+        self.assertIn("deliberate entry", self.read("docs/decision-trace.md"))
+
     def test_drops_the_sentinel_even_when_blocking(self):
         """Written before the block decision, so the scribe can read it whether
         it is dispatched before or after this hook."""
