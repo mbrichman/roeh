@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Run every check that costs nothing: the deterministic suite plus manifest
+# validation. The prompt layer (agents, skills) is tested separately by
+# `claude plugin eval`, which calls a model and therefore costs money — it is
+# not part of this script on purpose, so this one can run on every commit.
+set -uo pipefail
+cd "$(dirname "$0")/.." || exit 1
+
+fail=0
+
+echo "── unit + integration ──────────────────────────────────────────"
+python3 -m unittest discover -s tests "$@" || fail=1
+
+echo
+echo "── manifests ───────────────────────────────────────────────────"
+if command -v claude >/dev/null 2>&1; then
+  claude plugin validate . || fail=1
+else
+  echo "  claude not on PATH — skipping plugin validation"
+  echo "  (the suite's TestManifests still covers version agreement,"
+  echo "   hook paths, exec bits and the model pins)"
+fi
+
+echo
+if [ "$fail" -eq 0 ]; then
+  echo "✓ all checks passed"
+else
+  echo "✗ failures above"
+fi
+exit "$fail"
