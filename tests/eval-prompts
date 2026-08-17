@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Contract checks for the PROMPT layer — the agents, not the CLI.
+
+NOT part of `tests/run`: every case here calls a model, so it costs money and is
+not perfectly deterministic. Run it deliberately, before a release or after
+editing an agent definition:
+
+    tests/eval-prompts            # all cases
+    tests/eval-prompts --case verdict
+
+`claude plugin eval` is the eventual home for this (it has graders, ablation
+baselines and cost ceilings). It is in early access at time of writing, so this
+covers the contracts that actually break in the meantime.
+
+Each case asserts a MECHANICAL property, never a judgement about answer quality.
+Quality drifts with the model; these contracts are what other code depends on:
+
+  verdict     — gate mode must open with `VERDICT: <one of five words>` on line
+                one. This is the single most-failed instruction in the oracle,
+                by its own documentation. A gate whose result has to be inferred
+                from prose cannot be logged, relied on, or checked.
+  supersede   — a superseded figure must not be returned as current. The trace
+                is append-only, so the wrong number is still sitting there
+                reading as true. This is the one way the oracle actively
+                misleads, and it arrives wearing citations.
+  deadend     — a recorded dead-end must be surfaced, not silently re-walked.
+  notrecorded — silence must be reported as silence. Inventing a plausible
+                rationale is the exact failure the whole apparatus exists to
+                prevent.
+"""
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FIXTURE = os.path.join(ROOT, "tests", "fixtures", "trace.md")
+VERDICTS = r"CONTRADICTS|RE-IMPLEMENTS|NOT-RECORDED|NOVEL|CLEAR"
+
+
+def build_project(tmp):
+    """A repo whose record is the fixture trace, with roeh initialised."""
+    repo = os.path.join(tmp, "repo")
+    os.makedirs(os.path.join(repo, "docs"))
+    for cmd in (["init", "-q"], ["config", "user.email", "e@x.com"],
+                ["config", "user.name", "t"]):
+        subprocess.run(["git", "-C", repo, *cmd], capture_output=True)
+    shutil.copy(FIXTURE, os.path.join(repo, "docs", "decision-trace.md"))
+    subprocess.run([sys.executable, os.path.join(ROOT, "bin", "roeh"), "init"],
+                   cwd=repo, capture_output=True)
+    subprocess.run(["git", "-C", repo, "add", "-A", "-f"], capture_output=True)
+    subprocess.run(["git", "-C", repo, "commit", "-qm", "trace"],
+                   capture_output=True)
+    return repo
+
+
+def ask(repo, agent, prompt, timeout=300):
+    """Dispatch one agent and return its raw text."""
+    driver = (f"Use the Agent tool with subagent_type '{agent}'. Pass it "
+              f"EXACTLY this prompt and then reproduce its reply verbatim, "
+              f"with no preamble, commentary or reformatting:\n\n{prompt}")
+    p = subprocess.run(
+        ["claude", "--plugin-dir", ROOT, "--allowedTools", "Agent,Bash,Read,Grep,Glob",
+         "-p", driver],
+        cwd=repo, capture_output=True, text=True, timeout=timeout)
+    return p.stdout.strip()
+
+
+CASES = {}
+
+
+def case(name):
+    def deco(fn):
+        CASES[name] = fn
+        return fn
+    return deco
+
+
+@case("verdict")
+def verdict(repo):
+    out = ask(repo, "roeh:oracle",
+              "GATE: I want to add a second index backend on Postgres, "
+              "replacing SQLite. Any objection before I open the PR?")
+    first = next((l for l in out.splitlines() if l.strip()), "")
+    m = re.match(rf"^VERDICT:\s+({VERDICTS})(\s+WITH NOTE)?\s*$", first.strip())
+    return (bool(m),
+            f"first line was {first.strip()!r}, expected 'VERDICT: <{VERDICTS}>'")
+
+
+@case("supersede")
+def supersede(repo):
+    out = ask(repo, "roeh:oracle", "What batch size did we settle on, and why?")
+    has_current = "128" in out
+    stale_as_current = bool(re.search(r"512", out)) and not re.search(
+        r"correct|supersede|no longer|outdated|old tokenizer|was measured", out, re.I)
+    return (has_current and not stale_as_current,
+            f"expected the corrected figure 128 to lead"
+            f"{' — returned 512 as current' if stale_as_current else ''}; "
+            f"got: {out[:200]!r}")
+
+
+@case("deadend")
+def deadend(repo):
+    out = ask(repo, "roeh:oracle",
+              "I'm thinking of resolving duplicate people by cosine similarity "
+              "on their names. Sound reasonable?")
+    return (re.search(r"dead.?end", out, re.I) is not None
+            and re.search(r"cosine|0\.90|subject matter", out, re.I) is not None,
+            f"recorded dead-end was not surfaced; got: {out[:200]!r}")
+
+
+@case("notrecorded")
+def notrecorded(repo):
+    out = ask(repo, "roeh:oracle",
+              "Why did we choose the retry backoff schedule we use?")
+    return (re.search(r"not record|does not record|no rationale|not cover",
+                      out, re.I) is not None,
+            f"expected an explicit 'not recorded'; got: {out[:200]!r}")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--case", action="append", help="run only these cases")
+    args = ap.parse_args()
+    names = args.case or list(CASES)
+
+    if not shutil.which("claude"):
+        print("claude not on PATH — cannot run prompt evals")
+        return 2
+
+    tmp = tempfile.mkdtemp(prefix="roeh-eval-")
+    failures = 0
+    try:
+        repo = build_project(tmp)
+        for name in names:
+            print(f"── {name} ".ljust(64, "─"), flush=True)
+            try:
+                passed, detail = CASES[name](repo)
+            except Exception as e:
+                passed, detail = False, f"raised {type(e).__name__}: {e}"
+            print(("  ✓ pass" if passed else f"  ✗ FAIL — {detail}"), flush=True)
+            failures += 0 if passed else 1
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    print(f"\n{len(names) - failures}/{len(names)} passed")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
