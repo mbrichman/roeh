@@ -1,6 +1,6 @@
 # roeh
 
-**רואה** — *the seer.* The one you go to consult.
+**Roeh** (רואה) — *the seer*. The one you go to consult.
 
 A Claude Code plugin that gives a project an append-only **decision trace**, an **Oracle**
 that answers *"why did we do X"* from that record with citations, and a **scribe** that
