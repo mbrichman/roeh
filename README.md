@@ -217,6 +217,10 @@ project-aware without editing them: this project's vocabulary, its principles di
 the table of **live dead-ends** the Oracle leads with. The agent definitions hold only the
 invariant method.
 
+## License
+
+MIT — see [LICENSE](LICENSE).
+
 ## Provenance
 
 Generalised from a working system built for one project, where the trace was assembled by
