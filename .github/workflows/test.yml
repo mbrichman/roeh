@@ -1,0 +1,42 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # Both, because roeh resolves paths through ~ and computes a project slug
+    # from an absolute path — the two things most likely to differ by platform.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # bin/roeh has no third-party dependencies by design — it runs inside
+          # hooks, where a missing import is a silent failure at the worst
+          # possible moment. So there is nothing to install here, and this job
+          # would catch it if that ever stopped being true.
+          python-version: '3.11'
+
+      - name: git identity for the throwaway repos the tests create
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "ci"
+
+      - name: tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: executable bits survived checkout
+        run: |
+          for f in bin/roeh bin/roeh-precompact bin/roeh-sessionstart; do
+            test -x "$f" || { echo "$f is not executable"; exit 1; }
+          done
