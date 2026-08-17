@@ -358,3 +358,50 @@ warrant a fan-out.*
   editing the old §5 in place, which would have hidden the bug rather than exposing it.
   Cite: `bin/roeh-sessionstart` `section()`; regression test
   `test_compact_injects_the_LAST_resume_state`.
+
+### 2026-08-09 — origin (recorded 2026-08-17, out of chronological order)
+
+*Appended late. The trace is append-only, so an entry that belongs earlier goes at the
+end with its own date rather than being inserted — the file records when we learned
+things, not only when they happened.*
+
+- **[DECISION — owner] The decision trace was commissioned in these words, at
+  2026-08-09 11:51pm local**, while the six archaeology agents were already running
+  (dispatched 05:40–05:42 UTC on 2026-08-10):
+
+  > *"I have the AI tonight launching agents to do archaeology to go through the commit
+  > history and to build an immutable append-only log of decision traces that we've made
+  > along the way. So I'm going to fucking tattoo the stuff on itself. So we have a record
+  > of the decisions we made and why and we can go back and look at the assets and like
+  > not have to be in this stupid recursion that I feel I'm stuck in."*
+
+  Every load-bearing property of this tool is already in that sentence, before any of it
+  had a name:
+
+  - **"immutable append-only log"** — stated as the requirement, not derived later. This
+    is `[PRINCIPLE] append-only is structural`, and everything downstream follows from
+    it: supersession instead of editing, `roeh append` unable to seek, the scribe with no
+    `Write` tool.
+  - **"tattoo the stuff on itself"** — the record lives *with* the thing it describes, not
+    in a separate system. Why the trace is a file in the repo rather than a service.
+  - **"the decisions we made **and why**"** — the why was the point from the first
+    sentence. It is why comments and diffs are mined at all, rather than commit subjects.
+  - **"go back and look at the assets"** — §4, the artifact index.
+  - **"this stupid recursion that I feel I'm stuck in"** — §0. The recursion is the
+    problem statement, named by the person experiencing it, not a framing invented
+    afterwards to justify a tool.
+
+  REJECTED, implicitly and importantly: a mutable memory that gets updated in place. The
+  requirement was *immutable* and *append-only* in the first utterance — a constraint
+  chosen before anyone had been bitten by the alternative, which is rarer than it sounds.
+
+  GATES: nothing operational. It is here because it is the primary source. Every
+  reconstruction of "why does roeh work this way" in §1 and §3 is downstream of this, and
+  where any of them disagrees with this quote, **this quote wins.**
+
+- **[LESSON] The origin statement survived only because the owner kept it and pasted it
+  back.** It was not in a commit, a doc, or a session transcript this tool can reach — it
+  was said aloud, elsewhere, at midnight. The record that exists to stop things being lost
+  came within one act of memory of losing its own founding sentence. That is not an
+  argument against the tool; it is the sharpest available illustration of the gap it
+  cannot close on its own.
