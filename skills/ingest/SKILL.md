@@ -14,10 +14,42 @@ Accepts `--quick` (single-pass, cheap), `--since <date>` (history floor), and
 ## Phase 0 — resolve and scope
 
 1. `roeh config`. If not initialized, stop and point at `/roeh:init`.
-2. If the trace already has §3 chapters, this is a re-run: everything below must
-   **dedupe against what is already there and append only what is net-new**. Never
-   rebuild the file.
-3. **Establish the floor with the owner.** Show them the commit history and ask how far
+
+2. **`roeh ingest status` — then branch. Do NOT just start.** A full fan-out over
+   already-mined history is expensive and produces mostly duplicates, and starting a
+   second run over a live one double-writes into an append-only file. Read the state
+   first:
+
+   | State | What to do |
+   |---|---|
+   | `none` | Fresh project. Continue to step 3. |
+   | `running` | **Stop.** Another ingest is in progress (started under 6h ago). Report which units are outstanding and let it finish. Only override if the owner confirms that run is dead. |
+   | `abandoned` | A run died partway. **Offer to RESUME**: name the units that never landed and re-dispatch only those. This is almost always what they want — the alternative re-mines history already in the file. |
+   | `complete` | **ASK. Do not proceed on your own initiative.** See below. |
+   | `unknown` | A trace exists but predates lifecycle tracking. Treat as `complete` and ask the same question. |
+
+3. **When an ingest is already complete, ask — with a recommendation, not a menu.**
+   Present these three, in this order:
+
+   - **`/roeh:refresh` (recommended, and say so).** Folds in new commits, unmined
+     transcripts and changed memory files, *and* runs the drift check. This is the right
+     answer nearly every time someone reaches for a second ingest — they want the record
+     current, which is refresh's job, not ingest's.
+   - **Extend the floor** — re-ingest an *earlier* range they previously excluded, e.g.
+     `--since 2026-06-01` when the original floor was July. Genuinely additive; run it
+     scoped to the new range only.
+   - **Full re-ingest** — only when the record is known-bad or the repo's history was
+     rewritten. Say plainly what this costs: the full fan-out again, and because the
+     trace is append-only, **it cannot replace the old chapters — it appends beside
+     them.** A duplicated history is worse than a thin one, because the oracle then has
+     two accounts and no way to tell which is live. If they truly want a clean rebuild,
+     the honest path is a new trace file and archiving the old one — say that rather
+     than quietly doubling the record.
+
+   Whatever they choose, if you do proceed over an existing trace: **dedupe against what
+   is already there and append only what is net-new. Never rebuild the file in place.**
+
+4. **Establish the floor with the owner.** Show them the commit history and ask how far
    back matters:
    ```
    git log --all --date=short --format='%ad %h %s' | tail -40
@@ -36,12 +68,30 @@ Measure, then size the fan-out. Report these numbers before dispatching anything
 - `docs/`, `scripts/`, `evals/` or equivalent — what exists
 - `roeh sessions` — transcripts, with sizes
 
-## Phase 2 — fan out
+## Phase 2 — declare the plan, then fan out
 
 **Adaptive sizing.** Split the commit range into **dated chapters of roughly 20–40
 commits or one week, whichever is denser**, capped at 8 chapter agents. Denser coverage
 is higher fidelity, and fidelity is the entire point — but past ~8 the synthesis cost
 exceeds the marginal recall. With `--quick`, skip the split and run one sequential pass.
+
+**Register the plan before dispatching anything:**
+
+```
+roeh ingest begin --floor <date> --plan C1,C2,C3,M,A,S
+```
+
+This is what makes an interrupted run recoverable. Without it, a fan-out that dies at
+chapter 4 of 7 leaves a trace that reads exactly like a finished one — same sections,
+same voice, silently missing whole ranges of history. The Oracle would then answer *"not
+recorded"* for decisions that **are** recorded, just never mined, and it would sound
+exactly as confident as when it is right.
+
+Mark each unit off **as its chapter is appended**, not when its agent returns:
+
+```
+roeh ingest done C1
+```
 
 Dispatch in parallel:
 
@@ -123,7 +173,20 @@ what makes the agents project-aware without editing them: the vocabulary an agen
 otherwise misread, the §1 digest, and above all the **LIVE dead-ends** table the oracle
 leads with. Every row needs a citation into the trace.
 
-## Phase 5 — report
+## Phase 5 — close the ingest
+
+```
+roeh ingest end
+```
+
+This refuses to close while units remain unfinished — deliberately. If some genuinely
+cannot be completed (a range with no recoverable history, an agent that failed twice),
+close with `--force` and it is recorded as `partial-closed`, which `roeh doctor` then
+reports as a failure until it is resolved. **Never leave a run neither closed nor
+finished:** after six hours it reads as `abandoned`, and a half-built record that nobody
+knows is half-built is the exact failure this whole tool exists to prevent.
+
+## Phase 6 — report
 
 Size and line count, chapters written, what each agent found that nothing else had, and
 **anything you could not source**. Then state plainly what the record still does not

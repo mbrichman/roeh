@@ -171,7 +171,34 @@ roeh mark <session-id>               record a transcript as folded in
 roeh pending [--clear]               the PreCompact → scribe handshake
 roeh slug [path]                     Claude Code project-directory slug
 roeh doctor [--fix]                  check artifacts against the running plugin
+roeh ingest status|begin|done|end|abandon
+                                     ingest lifecycle (see below)
 ```
+
+## Running ingest twice
+
+`/roeh:ingest` **asks before doing anything** when a trace already exists, because the
+answer is usually not "ingest again":
+
+- **already complete** → it offers `/roeh:refresh` first and recommends it. Refresh is
+  what people actually want when they reach for a second ingest: new commits, unmined
+  transcripts, changed memory files, plus the drift check. The other options are
+  extending the floor to an *earlier* range, or a full re-ingest — and it says plainly
+  what that last one costs, because **the trace is append-only, so a re-ingest cannot
+  replace the old chapters, only append beside them.** A doubled history is worse than a
+  thin one: the Oracle then holds two accounts and cannot tell which is live.
+- **already running** → it stops. Starting a second fan-out over a live one double-writes.
+- **abandoned partway** → it offers to *resume* the units that never landed, rather than
+  re-mining history already in the file.
+
+That last state is why the lifecycle exists. An ingest that dies at chapter 4 of 7
+leaves a trace that reads exactly like a finished one — same sections, same voice,
+silently missing whole ranges. The Oracle would then answer *"not recorded"* for
+decisions that **are** recorded, just never mined, and sound exactly as confident as when
+it is right. So a run declares its plan up front (`roeh ingest begin --plan …`), marks
+units off as their chapters land, and refuses to close with work outstanding. `roeh
+doctor` reports an abandoned or force-closed run as a **failure**, and `SessionStart`
+surfaces it unprompted.
 
 ## Layout
 

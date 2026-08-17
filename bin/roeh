@@ -17,6 +17,8 @@ Subcommands:
   mark      record that a session/commit has been folded into the trace
   doctor    check this project's artifacts against the running plugin
             (--fix applies the safe repairs; never touches the trace)
+  ingest    ingest lifecycle: status | begin | done | end | abandon
+            (so an interrupted run is a fact, not a guess)
 
 No third-party dependencies, by design: this runs inside hooks, where a
 missing import is a silent failure at the worst possible moment.
@@ -360,6 +362,107 @@ def cmd_slug(args):
     print(slug_for(args[0] if args else os.getcwd()))
 
 
+INGEST_STALE_AFTER = 6 * 3600  # a run quiet this long is abandoned, not running
+
+
+def cmd_ingest(args):
+    """Ingest lifecycle. An ingest that dies halfway leaves a trace that reads
+    exactly like a finished one — same sections, same voice, silently missing
+    whole chapters of history. The oracle would then answer "not recorded" for
+    decisions that ARE recorded, just not yet mined, and it would sound just as
+    confident as when it is right.
+
+    So an ingest declares its plan up front and marks chapters off as they land.
+    That makes the difference between "complete", "interrupted at chapter 4 of
+    7", and "never run" a fact rather than a guess.
+
+      roeh ingest status [--json]
+      roeh ingest begin --floor <date> --plan c1,c2,c3
+      roeh ingest done <chapter-id>
+      roeh ingest end
+      roeh ingest abandon
+    """
+    cfg = load_config()
+    st = load_state(cfg)
+    ing = st.get("ingest") or {}
+    sub = args[0] if args else "status"
+
+    def val(flag, default=None):
+        return args[args.index(flag) + 1] if flag in args else default
+
+    if sub == "begin":
+        plan = [p.strip() for p in (val("--plan") or "").split(",") if p.strip()]
+        st["ingest"] = {"state": "partial", "floor": val("--floor"),
+                        "plan": plan, "done": [], "started": time.time(),
+                        "finished": None}
+        save_state(cfg, st)
+        print(f"ingest begun: {len(plan)} planned unit(s), floor {val('--floor')}")
+        return
+
+    if sub == "done":
+        if not ing:
+            die("no ingest in progress — `roeh ingest begin` first")
+        for cid in [a for a in args[1:] if not a.startswith("-")]:
+            if cid not in ing["done"]:
+                ing["done"].append(cid)
+        st["ingest"] = ing
+        save_state(cfg, st)
+        print(f"{len(ing['done'])}/{len(ing['plan'])} complete")
+        return
+
+    if sub == "end":
+        if not ing:
+            die("no ingest in progress")
+        missing = [p for p in ing["plan"] if p not in ing["done"]]
+        if missing and "--force" not in args:
+            die(f"refusing to close an ingest with {len(missing)} unfinished "
+                f"unit(s): {', '.join(missing)}\n"
+                "       finish them, or `roeh ingest end --force` to record it "
+                "as partial (the gap will be reported by `roeh doctor`)")
+        ing["state"] = "complete" if not missing else "partial-closed"
+        ing["finished"] = time.time()
+        ing["missing"] = missing
+        st["ingest"] = ing
+        st["last_ingest"] = ing["finished"]
+        save_state(cfg, st)
+        print(f"ingest closed: {ing['state']}"
+              + (f" ({len(missing)} never completed)" if missing else ""))
+        return
+
+    if sub == "abandon":
+        st["ingest"] = None
+        save_state(cfg, st)
+        print("ingest state cleared — the trace itself is untouched")
+        return
+
+    # --- status ----------------------------------------------------------
+    trace_exists = os.path.exists(cfg["trace_abs"])
+    if not ing:
+        state = "none" if not trace_exists else "unknown"
+    else:
+        state = ing.get("state", "partial")
+        if state == "partial":
+            quiet = time.time() - ing.get("started", 0)
+            state = "abandoned" if quiet > INGEST_STALE_AFTER else "running"
+    result = {"state": state, "trace_exists": trace_exists,
+              "floor": ing.get("floor"), "plan": ing.get("plan", []),
+              "done": ing.get("done", []),
+              "missing": [p for p in ing.get("plan", []) if p not in ing.get("done", [])],
+              "started": ing.get("started"), "finished": ing.get("finished")}
+    if "--json" in args:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    print(f"ingest: {state}")
+    if state == "unknown":
+        print("  a trace exists but no ingest was ever recorded — it predates "
+              "lifecycle tracking, or was built by hand")
+    if result["plan"]:
+        print(f"  {len(result['done'])}/{len(result['plan'])} units"
+              + (f"  missing: {', '.join(result['missing'])}" if result["missing"] else ""))
+    if result["floor"]:
+        print(f"  floor: {result['floor']}")
+
+
 def plugin_version():
     """Version of the roeh that is actually running.
 
@@ -465,6 +568,32 @@ def cmd_doctor(args):
             warn(f"trace has passed the full-read threshold ({lines} lines / "
                  f"{kb}KB)", "the oracle now degrades to chapter reads — expect "
                  "it to say so, and distrust any answer that does not")
+
+    # --- ingest completeness ----------------------------------------------
+    ing = load_state(cfg).get("ingest") or {}
+    if os.path.exists(cfg["trace_abs"]):
+        istate = ing.get("state")
+        missing = [p for p in ing.get("plan", []) if p not in ing.get("done", [])]
+        if not ing:
+            warn("no ingest ever recorded for this trace",
+                 "predates lifecycle tracking, or was built by hand — "
+                 "`roeh ingest status` will keep saying 'unknown'")
+        elif istate == "partial" and time.time() - ing.get("started", 0) > INGEST_STALE_AFTER:
+            fail(f"an ingest was ABANDONED partway: {len(ing.get('done', []))}"
+                 f"/{len(ing.get('plan', []))} units, missing {', '.join(missing)}",
+                 "the trace reads as complete but whole chapters were never "
+                 "mined — the oracle will say 'not recorded' for decisions that "
+                 "are. Re-run /roeh:ingest to finish, or `roeh ingest abandon`")
+        elif istate == "partial":
+            warn("an ingest appears to be RUNNING right now "
+                 f"({len(ing.get('done', []))}/{len(ing.get('plan', []))} units)",
+                 "starting another would double-write — let it finish")
+        elif istate == "partial-closed":
+            fail(f"ingest was closed with {len(ing.get('missing', []))} unit(s) "
+                 f"never completed: {', '.join(ing.get('missing', []))}",
+                 "re-run /roeh:ingest scoped to those ranges")
+        else:
+            ok("ingest complete")
 
     # --- profile ----------------------------------------------------------
     if not os.path.exists(cfg["profile_abs"]):
@@ -595,7 +724,8 @@ def cmd_pending(args):
 
 COMMANDS = {"init": cmd_init, "config": cmd_config, "status": cmd_status,
             "append": cmd_append, "sessions": cmd_sessions, "mark": cmd_mark,
-            "slug": cmd_slug, "pending": cmd_pending, "doctor": cmd_doctor}
+            "slug": cmd_slug, "pending": cmd_pending, "doctor": cmd_doctor,
+            "ingest": cmd_ingest}
 
 
 def main():
