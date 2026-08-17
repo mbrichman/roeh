@@ -33,6 +33,126 @@ almost never *why*. This plugin builds the durable layer beneath all of that.
 Plus **reconciliation** (`/roeh:refresh`): folds in new commits, unmined transcripts and
 changed memory files, *and* checks whether what's already written is still true.
 
+## What ingest actually does
+
+Most memory tooling is **prospective**: you install it, and it starts recording from that
+moment. Everything that happened before — every constraint discovered the hard way, every
+approach tried and abandoned, every "we chose X because Y" — stays lost. You get a record
+that begins the day you decided you needed one, which is always months after the day you
+actually needed one.
+
+`/roeh:ingest` is **retrospective**. It reconstructs the record from evidence that already
+exists in your repo, then hands it to the Oracle. On a three-week-old project that has
+never had a memory layer, you end the first run with a cited history of how the thing got
+this way.
+
+### The sources, and why each one
+
+| Source | What it yields | Why |
+|---|---|---|
+| **Commit messages** | The shape of the history: what changed, when, in what order. | Cheap and structured. But it tells you *what*, and usually not *why*. |
+| **Diffs** | What the change actually did — the surfaces it touched, what moved. | A commit subject is a claim; the diff is the evidence. They disagree more often than anyone likes. |
+| **Inline comments & docstrings** ⭐ | **The rationale.** Why-this-not-that, the constraint that forced it, the gotcha that bit someone. | This is the highest-yield source in the whole pass. See below. |
+| **Session transcripts** (`.jsonl`) | Real-time reasoning, and the roads not taken — options weighed and rejected that never reached a commit at all. | The richest and most dangerous vein. Mined under the hall-of-mirrors rule below. |
+| **Memory files** | Whatever the lossy index already holds, read in full rather than as one-line pointers. | Rehydration: recover the fidelity compaction threw away. |
+| **Docs, specs, evals, scripts** | What each artifact *is*, why it exists, its gotchas. | So a future session never rediscovers the tool it already has. |
+
+### Why the diff body, and especially the comments
+
+**The commit message says what. The code comment says why.**
+
+That instruction — *"when you're looking at commits and diffs I want you to be sure to
+especially look at comments, that should contain a lot of the rationale"* — came from the
+owner of the project roeh was generalised from, and it turned out to be the single
+highest-yield instruction in the entire archaeology. Codebases carry their reasoning
+inline: the docstring that quotes a design ruling, the comment explaining why the obvious
+approach doesn't work, the `# NOTE:` above a guard that exists because of an outage
+nobody wrote up.
+
+That material is:
+
+- **Written at the moment of the decision**, by the person making it, with the context
+  still loaded — not reconstructed later from memory.
+- **Maintained under review**, unlike a commit message, which is written once and never
+  revisited.
+- **Attached to the exact line it explains**, so it cites itself. Every entry roeh
+  extracts from it carries a `file:line`.
+
+So every chapter agent is told, non-negotiably: *mine the inline comments and docstrings
+at each commit, not just the diff lines or the subject line* — and quote that rationale
+with a pointer. An entry sourced from a comment is the strongest kind in the file,
+because a future session can go read the comment.
+
+### The hall-of-mirrors rule
+
+Transcripts hold rationale nothing else does, and they are the one source that can poison
+the record. Legitimate sources are **the owner's turns and the code**. The assistant's own
+prose is the system's own emission — file that as history and the record starts feeding on
+its own reflection, which every future session then reads back as fact.
+
+So transcripts are distilled twice: strip tool I/O and meta events, then reduce to the
+owner's turns with just enough surrounding context to read them. If a candidate learning
+traces only to something an assistant said, it is dropped.
+
+### How the pass runs
+
+Adaptive. Commits are split into dated chapters of roughly 20–40 commits or one week,
+whichever is denser, capped at 8 — plus memory-rehydration, artifact-index and
+session-mining passes, all in parallel. Denser chapters mean higher fidelity, which is the
+entire point; past ~8 the synthesis cost exceeds the marginal recall. A small repo
+collapses to a single sequential pass, and `--quick` forces it.
+
+Extraction agents run on `sonnet`, judgement runs on `opus` — see [Models](#models).
+Every agent carries a hard read-only-git guardrail, because an archaeology agent moving
+`HEAD` out from under live work is a mistake this lineage has already made once.
+
+The run declares its plan up front and marks units off as chapters land, so an ingest that
+dies partway is a recorded fact rather than a trace that merely *looks* finished. See
+[Running ingest twice](#running-ingest-twice).
+
+## How this differs from other memory tools
+
+Persistent-memory tooling for coding agents is a crowded space, and much of it solves a
+genuinely different problem. Where roeh differs:
+
+**Retrospective, not prospective.** Most tools — [mem0](https://docs.mem0.ai/integrations/claude-code),
+[projectmem](https://github.com/riponcm/projectmem),
+[repomemory](https://github.com/DanielGuru/repomemory) — begin recording at install and
+accumulate forward. roeh's first act is to mine the history you already have.
+[Deciduous](https://deciduous.dev/) also builds from existing git history, so this is not
+unique — but it is uncommon.
+
+**It reads the diff and the comments, not just the commit message.** This is the real
+difference, and [Lore](https://arxiv.org/abs/2603.15566) frames the shared problem well:
+*"Each commit captures a code diff but discards the reasoning behind it."* Lore's answer is
+to encode that reasoning into **future** commits, as structured git trailers — a good idea
+that requires everyone to start committing differently. roeh's answer points the other way:
+excavate the reasoning already sitting in **past** commits, in the diff body and the inline
+comments inside it, requiring no change to how anyone works. The two are complementary; a
+repo using Lore gives roeh richer messages to mine.
+
+I have not found another tool that treats docstrings and inline comments as a first-class
+rationale source. If one exists, that comparison should be corrected here.
+
+**Provenance is enforced, not assumed.** Every claim carries a tag, a section and a SHA or
+`file:line`. "The record does not cover this" is a supported answer, and the Oracle is
+instructed to prefer it over a plausible reconstruction. Conversation-derived memory
+generally cannot distinguish *the user decided this* from *the assistant suggested this*;
+roeh's rule is that only the former counts.
+
+**Append-only, with supersession.** Most memory stores overwrite: a fact is updated in
+place. roeh never edits. A superseded decision gets a `[REVERSAL]` beside it and a wrong
+number gets a `[CORRECTION]`, so the record shows what was believed and when. The Oracle
+checks forward for supersession before quoting anything, because in an append-only file
+the wrong answer is still sitting there reading as true.
+
+**One file a human can read.** The record is markdown in your repo, diffable in review and
+readable without the tool. Not a vector store, not a graph database, not a cloud service.
+
+**What is not unique:** gating compaction. Other tools intercept `/compact` to force a save
+first, and that is the right instinct. roeh's variant blocks only manual compaction — never
+auto, where the window is already full and refusing can wedge the session.
+
 ## Install
 
 ```bash
