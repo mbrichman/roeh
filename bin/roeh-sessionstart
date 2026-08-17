@@ -104,6 +104,24 @@ def main():
             "chapter of §3 before proceeding.")
         out({}, body)
 
+    # Surface structural breakage, not just staleness. `claude plugin update`
+    # moves the plugin; nothing in the harness migrates a project's artifacts to
+    # match, and a half-migrated record fails silently. Only FAILs are shown —
+    # warnings on every session start are how a check gets tuned out.
+    broken = ""
+    try:
+        d = subprocess.run([sys.executable, os.path.join(HERE, "roeh"), "doctor"],
+                           cwd=cwd, capture_output=True, text=True, timeout=20)
+        if d.returncode != 0:
+            fails = [ln.strip() for ln in d.stdout.splitlines() if ln.strip().startswith("✗")]
+            if fails:
+                broken = ("\n⚠️ roeh doctor reports structural problems with this "
+                          "project's record:\n" + "\n".join("  " + f for f in fails)
+                          + "\nRun `roeh doctor` for the fixes. Until these are "
+                          "resolved, treat oracle answers as unverified.\n")
+    except Exception:
+        pass
+
     stale = ""
     bits = []
     if st.get("behind"):
@@ -120,10 +138,12 @@ def main():
                  "current one.\n")
 
     out({"systemMessage":
-         (f"⚠️  roeh: trace is behind ({', '.join(bits)}) — /roeh:refresh"
+         ("✗ roeh doctor: structural problems with the record — run `roeh doctor`"
+          if broken else
+          f"⚠️  roeh: trace is behind ({', '.join(bits)}) — /roeh:refresh"
           if stale else
           f"✓ roeh: trace current ({st['trace_lines']} lines)")},
-        header + stale)
+        header + broken + stale)
 
 
 if __name__ == "__main__":

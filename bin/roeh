@@ -15,6 +15,8 @@ Subcommands:
   sessions  list this project's Claude Code transcripts, mined or not
   slug      compute the Claude Code project-directory slug for a path
   mark      record that a session/commit has been folded into the trace
+  doctor    check this project's artifacts against the running plugin
+            (--fix applies the safe repairs; never touches the trace)
 
 No third-party dependencies, by design: this runs inside hooks, where a
 missing import is a silent failure at the worst possible moment.
@@ -358,6 +360,198 @@ def cmd_slug(args):
     print(slug_for(args[0] if args else os.getcwd()))
 
 
+def plugin_version():
+    """Version of the roeh that is actually running.
+
+    Resolved from this script's own location rather than CLAUDE_PLUGIN_ROOT, so
+    it is still correct when invoked directly from a clone or a test.
+    """
+    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     ".claude-plugin", "plugin.json")
+    try:
+        with open(p) as f:
+            return json.load(f).get("version", "unknown")
+    except Exception:
+        return "unknown"
+
+
+# Sections the agents structurally depend on. The oracle's degradation ladder
+# reads §0/§1/§5 in full at ANY trace size and always reads the staleness
+# ledger, so their absence is not cosmetic — it silently removes the guarantee.
+REQUIRED_SECTIONS = ["0", "1", "3", "5"]
+
+
+def cmd_doctor(args):
+    """Check that this project's roeh artifacts match the running plugin.
+
+    `claude plugin update` updates the PLUGIN. Nothing in the harness migrates a
+    project's config, trace or profile when the plugin's expectations move — and
+    a half-migrated record is the worst failure available to a tool whose entire
+    premise is that the record can be trusted. This is that missing check.
+
+    --fix applies only the safe repairs: config keys, schema version, gitignore.
+    It never touches the trace. Repairing an append-only record is a
+    contradiction in terms.
+    """
+    fix = "--fix" in args
+    cfg = load_config()
+    root = cfg["_root"]
+    findings = []          # (level, message, hint)
+
+    def ok(m):    findings.append(("OK", m, None))
+    def warn(m, h=None):  findings.append(("WARN", m, h))
+    def fail(m, h=None):  findings.append(("FAIL", m, h))
+
+    pv = plugin_version()
+    ok(f"plugin roeh {pv}")
+
+    # --- config -----------------------------------------------------------
+    if not cfg["_configured"]:
+        fail(f"no config at {config_path(root)}", "run /roeh:init")
+        report(findings, fix)
+        return
+    ok(f"config {config_path(root)}")
+
+    found_v = cfg.get("version")
+    if found_v == SCHEMA_VERSION:
+        ok(f"config schema v{found_v} matches plugin")
+    elif isinstance(found_v, int) and found_v < SCHEMA_VERSION:
+        warn(f"config schema v{found_v}, plugin expects v{SCHEMA_VERSION}",
+             "roeh doctor --fix")
+    else:
+        fail(f"config schema v{found_v} is NEWER than this plugin "
+             f"(v{SCHEMA_VERSION}) — the plugin is behind, not the config",
+             "claude plugin update roeh")
+
+    defaults = default_config(root, cfg.get("mode", "repo"))
+    on_disk = json.load(open(config_path(root)))
+    missing = [k for k in defaults if k not in on_disk]
+    unknown = [k for k in on_disk if k not in defaults]
+    if missing:
+        warn(f"config missing key(s) added by a newer roeh: {', '.join(missing)}",
+             "roeh doctor --fix")
+    if unknown:
+        warn(f"config has unrecognised key(s): {', '.join(unknown)}",
+             "typo, or left over from an older roeh — remove by hand")
+    if not missing and not unknown:
+        ok("config keys complete")
+
+    # --- the record -------------------------------------------------------
+    if not os.path.exists(cfg["trace_abs"]):
+        fail(f"no trace at {cfg['trace_abs']}", "run /roeh:ingest")
+    else:
+        text = open(cfg["trace_abs"], errors="ignore").read()
+        lines = text.count("\n") + 1
+        kb = len(text.encode()) // 1024
+        ok(f"trace {lines} lines / {kb}KB")
+
+        absent = [s for s in REQUIRED_SECTIONS
+                  if not re.search(rf"^#{{1,6}}\s*(?:§\s*)?{s}\b", text, re.M)]
+        if absent:
+            fail("trace is missing section(s) the agents depend on: "
+                 + ", ".join("§" + s for s in absent),
+                 "the oracle reads §0/§1/§5 in full at any size; add the "
+                 "headings (append — never restructure the file)")
+        else:
+            ok("trace has all required sections")
+
+        if not re.search(r"staleness|contradiction", text, re.I):
+            warn("no contradictions/staleness ledger found in the trace",
+                 "the oracle reads it in full at every size; without one it "
+                 "cannot tell you what the record already knows is unreliable")
+
+        # The oracle stops reading the whole file past roughly here.
+        if lines > 1500 or kb > 400:
+            warn(f"trace has passed the full-read threshold ({lines} lines / "
+                 f"{kb}KB)", "the oracle now degrades to chapter reads — expect "
+                 "it to say so, and distrust any answer that does not")
+
+    # --- profile ----------------------------------------------------------
+    if not os.path.exists(cfg["profile_abs"]):
+        warn(f"no profile at {cfg['profile_abs']}",
+             "the agents fall back to generic behaviour — /roeh:ingest writes it")
+    elif os.path.exists(cfg["trace_abs"]):
+        drift = os.path.getmtime(cfg["trace_abs"]) - os.path.getmtime(cfg["profile_abs"])
+        if drift > 30 * 86400:
+            warn(f"profile is {int(drift//86400)} days behind the trace",
+                 "/roeh:refresh — a retired dead-end still listed here makes the "
+                 "oracle warn people off the right answer")
+        else:
+            ok("profile present and current with the trace")
+
+    # --- placement --------------------------------------------------------
+    in_repo = os.path.abspath(cfg["trace_abs"]).startswith(os.path.abspath(root) + os.sep)
+    if cfg.get("mode") == "local":
+        if in_repo:
+            fail("mode is 'local' but the trace sits INSIDE the repo",
+                 "one `git add -A` publishes it — move it or switch to repo mode")
+        else:
+            ok("local mode: trace is outside the repo")
+    else:
+        if not in_repo:
+            warn("mode is 'repo' but the trace is outside it",
+                 "it will not be versioned, which is the whole point of repo mode")
+        elif run(["git", "-C", root, "ls-files", "--error-unmatch",
+                  os.path.relpath(cfg["trace_abs"], root)]):
+            ok("repo mode: trace is tracked by git (append-only is provable)")
+        else:
+            warn("repo mode but the trace is NOT tracked by git",
+                 f"git add {os.path.relpath(cfg['trace_abs'], root)} — untracked, "
+                 "append-only is a promise rather than a property")
+
+    # --- housekeeping -----------------------------------------------------
+    gi = os.path.join(root, ".gitignore")
+    want = [".claude/roeh-state.json", ".claude/roeh-pending.json"]
+    body = open(gi).read() if os.path.exists(gi) else ""
+    absent_ig = [w for w in want if w not in body]
+    if absent_ig and os.path.isdir(os.path.join(root, ".git")):
+        warn("per-machine watermarks not gitignored: " + ", ".join(absent_ig),
+             "roeh doctor --fix")
+        if fix:
+            with open(gi, "a") as f:
+                f.write("\n# roeh per-machine watermarks\n"
+                        + "\n".join(absent_ig) + "\n")
+            findings[-1] = ("FIXED", "added watermarks to .gitignore", None)
+    elif not absent_ig:
+        ok("watermarks gitignored")
+
+    if not os.path.isdir(cfg["sessions_dir_abs"]):
+        warn("no Claude Code transcripts found for this project",
+             "session mining will find nothing — expected if you work elsewhere")
+    else:
+        ok(f"{len(sessions_for(cfg))} transcript(s) discoverable")
+
+    # --- apply safe fixes -------------------------------------------------
+    if fix and (missing or (isinstance(found_v, int) and found_v < SCHEMA_VERSION)):
+        merged = dict(defaults)
+        merged.update(on_disk)          # on-disk values win; only gaps are filled
+        merged["version"] = SCHEMA_VERSION
+        with open(config_path(root), "w") as f:
+            json.dump(merged, f, indent=2, sort_keys=True)
+        # Flip the findings this repaired rather than appending beside them —
+        # a summary that still counts a warning it just fixed trains people to
+        # ignore the count.
+        for i, (level, msg, hint) in enumerate(findings):
+            if level == "WARN" and ("config schema v" in msg or "config missing key" in msg):
+                findings[i] = ("FIXED", msg + "  → migrated", None)
+
+    report(findings, fix)
+
+
+def report(findings, fix):
+    icons = {"OK": "✓", "WARN": "!", "FAIL": "✗", "FIXED": "→"}
+    for level, msg, hint in findings:
+        print(f"  {icons[level]} {msg}")
+        if hint and level != "OK":
+            print(f"      {hint}")
+    fails = sum(1 for f in findings if f[0] == "FAIL")
+    warns = sum(1 for f in findings if f[0] == "WARN")
+    print(f"\n{fails} failing, {warns} warning(s)"
+          + ("" if fix else ("  —  roeh doctor --fix applies the safe repairs"
+                             if warns or fails else "")))
+    sys.exit(1 if fails else 0)
+
+
 PENDING_NAME = "roeh-pending.json"
 PENDING_TTL = 600  # seconds
 
@@ -401,7 +595,7 @@ def cmd_pending(args):
 
 COMMANDS = {"init": cmd_init, "config": cmd_config, "status": cmd_status,
             "append": cmd_append, "sessions": cmd_sessions, "mark": cmd_mark,
-            "slug": cmd_slug, "pending": cmd_pending}
+            "slug": cmd_slug, "pending": cmd_pending, "doctor": cmd_doctor}
 
 
 def main():

@@ -1,0 +1,18 @@
+{
+  "name": "roeh",
+  "owner": {
+    "name": "mbrichman",
+    "url": "https://github.com/mbrichman"
+  },
+  "metadata": {
+    "description": "Decision-trace tooling for Claude Code: an append-only record of why, an Oracle that reads it, and a scribe that keeps it current."
+  },
+  "plugins": [
+    {
+      "name": "roeh",
+      "source": "./",
+      "version": "0.2.0",
+      "description": "רואה — the seer. An append-only decision trace for your project, an Oracle that answers 'why did we do X' from the record with citations, and a scribe that writes to it before compaction discards the reasoning."
+    }
+  ]
+}

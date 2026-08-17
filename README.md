@@ -36,7 +36,14 @@ changed memory files, *and* checks whether what's already written is still true.
 ## Install
 
 ```bash
-git clone <this repo> ~/projects/roeh
+claude plugin marketplace add mbrichman/roeh
+claude plugin install roeh@roeh
+```
+
+Or, for development against a clone:
+
+```bash
+git clone https://github.com/mbrichman/roeh ~/projects/roeh
 claude --plugin-dir ~/projects/roeh
 ```
 
@@ -46,6 +53,39 @@ Then, in your project:
 /roeh:init        # choose where the trace lives; write config + skeleton
 /roeh:ingest      # build the record from history
 ```
+
+### Updating
+
+The harness handles the plugin itself — there is no `/roeh:update`, deliberately:
+
+```bash
+claude plugin update roeh     # marketplace install (restart to apply)
+git pull && /reload-plugins   # --plugin-dir install
+```
+
+What the harness does **not** handle is your *project's* artifacts. `claude plugin
+update` moves the plugin; nothing migrates a `.claude/roeh.json` written by an older
+version, or a trace that predates a change to the sections the agents depend on. A
+half-migrated record is the worst failure available to a tool whose premise is that the
+record can be trusted — so:
+
+```
+roeh doctor          # check this project against the running plugin
+roeh doctor --fix    # apply the safe repairs
+```
+
+`doctor` checks the config schema version against the plugin, flags missing and
+unrecognised keys, verifies the trace still has §0/§1/§3/§5 and a staleness ledger,
+warns when the trace has passed the Oracle's full-read threshold, notices a profile
+drifting behind the trace, and catches two placement mistakes worth catching: a
+`repo`-mode trace that is not actually tracked by git (append-only is then a promise,
+not a property), and a `local`-mode trace sitting **inside** the repo, where one
+`git add -A` publishes it.
+
+`--fix` touches config and `.gitignore` only. **It never touches the trace** — repairing
+an append-only record is a contradiction in terms. `SessionStart` surfaces `doctor`
+failures automatically, but only failures: warnings on every session start are how a
+check gets tuned out.
 
 > **Harness gotcha:** a newly registered agent is not dispatchable until the session
 > restarts. Edits to an *already-registered* definition hot-reload. So after a first
@@ -130,6 +170,7 @@ roeh sessions [--unmined]            this project's transcripts
 roeh mark <session-id>               record a transcript as folded in
 roeh pending [--clear]               the PreCompact → scribe handshake
 roeh slug [path]                     Claude Code project-directory slug
+roeh doctor [--fix]                  check artifacts against the running plugin
 ```
 
 ## Layout
