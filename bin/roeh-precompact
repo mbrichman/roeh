@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""PreCompact gate — the moment unrecorded decisions die.
+
+Compaction summarises away the reasoning that produced the work. The commits
+survive; the *why* does not. This fires immediately before that happens.
+
+It does not nag unconditionally — an unconditional reminder is tuned out by
+week two. It compares the trace against evidence that work actually happened
+(commits, unmined transcripts, changed memory files) and only speaks when the
+record is genuinely behind, naming the specific items so the entry can be
+written from evidence rather than from a fading context.
+
+Policy, per trigger:
+  manual — BLOCK (exit 2). You typed /compact, so there is context room to
+           record first. Blocking here costs a minute and saves the rationale.
+  auto   — NEVER block. Auto-compact fires when the window is already full;
+           refusing it there can wedge the session with nowhere to go. A loud
+           injected reminder that survives into the post-compaction context is
+           the right instrument.
+
+Escape hatch: ROEH_SKIP=1 disables the block. A gate with no bypass is a wedge
+waiting for the one night you genuinely need to compact and move on.
+"""
+import json
+import os
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+MAX_LISTED = 15
+
+
+def out(payload, code=0):
+    if payload:
+        print(json.dumps(payload))
+    sys.exit(code)
+
+
+def main():
+    try:
+        event = json.load(sys.stdin)
+    except Exception:
+        event = {}
+    trigger = event.get("trigger", "auto")
+    cwd = event.get("cwd") or os.getcwd()
+
+    try:
+        raw = subprocess.run([sys.executable, os.path.join(HERE, "roeh"),
+                              "status", "--json"],
+                             cwd=cwd, capture_output=True, text=True,
+                             timeout=20).stdout
+        st = json.loads(raw)
+    except Exception:
+        out({})  # No config, no trace, no git — stay silent rather than noisy.
+
+    if not st.get("trace_exists"):
+        out({})
+    if not st.get("behind"):
+        out({"systemMessage":
+             f"✓ decision trace current ({st['trace_lines']} lines, written "
+             f"{st['hours_since']:.1f}h ago)"})
+
+    commits = st.get("commits", [])
+    sessions = st.get("unmined_sessions", [])
+    memory = st.get("memory_changed", [])
+
+    lines = []
+    if commits:
+        listed = commits[:MAX_LISTED]
+        lines.append(f"{len(commits)} unrecorded commit(s):")
+        lines += [f"  - {c['sha']} {c['subject']}" for c in listed]
+        if len(commits) > len(listed):
+            lines.append(f"  …and {len(commits) - len(listed)} more")
+    if sessions:
+        lines.append(f"{len(sessions)} unmined session transcript(s) — "
+                     "real-time rationale the commits do not hold:")
+        lines += [f"  - {s['id']} ({s['size']//1024}KB)" for s in sessions[:5]]
+    if memory:
+        lines.append(f"{len(memory)} memory file(s) changed since: "
+                     + ", ".join(memory[:8]))
+    evidence = "\n".join(lines)
+
+    context = (
+        "⚠️ PRE-COMPACTION — THE DECISION TRACE IS BEHIND THE WORK.\n\n"
+        f"Compaction is about to discard the reasoning behind this work. The "
+        f"trace ({st['trace']}) is what survives it.\n\n"
+        f"{evidence}\n\n"
+        "BEFORE continuing: dispatch the `scribe` agent to draft entries, then "
+        "append them with `roeh append` (append-only; it cannot rewrite). An "
+        "entry is owed on a merge, a WITHDRAWAL (higher value than a merge), a "
+        "structural review finding, a measurement that changes the next move, "
+        "or a call the owner made in conversation.\n\n"
+        "Each entry carries five things: the decision in one line; the WHY; "
+        "WHAT WAS REJECTED AND WHY (the part re-derivation always loses); "
+        "citations (SHA and/or file:line); and what it gates. Append only — a "
+        "superseded entry gets a new [REVERSAL] beside it, never an edit.\n\n"
+        "If an item is trivial (typo, formatting, a test-only follow-up already "
+        "covered), say so and skip it. Not everything is a decision — but "
+        "silence should be a judgement, not an oversight."
+    )
+
+    # Drop the sentinel BEFORE deciding to block. Hook handlers inside one
+    # event have no documented order, so this must be readable by the scribe
+    # whether it is dispatched before or after this script runs.
+    try:
+        subprocess.run([sys.executable, os.path.join(HERE, "roeh"),
+                        "pending", "--write"], cwd=cwd, text=True, timeout=10,
+                       input=json.dumps({"trigger": trigger,
+                                         "evidence": evidence,
+                                         "commits": commits,
+                                         "sessions": sessions,
+                                         "memory": memory}),
+                       capture_output=True)
+    except Exception:
+        pass
+
+    blocking = (trigger == "manual" and not os.environ.get("ROEH_SKIP"))
+    if blocking:
+        # exit 2 blocks compaction; stderr is what the user and model see.
+        print(
+            "COMPACTION BLOCKED — the decision trace is behind the work.\n\n"
+            f"{evidence}\n\n"
+            "Record these first: dispatch the `scribe` agent, then "
+            "`roeh append`. Re-run /compact when the trace is current.\n"
+            "To compact anyway: ROEH_SKIP=1 (the rationale above will be lost).",
+            file=sys.stderr)
+        sys.exit(2)
+
+    out({
+        "systemMessage": (
+            f"⚠️  trace is behind: {len(commits)} commit(s), "
+            f"{len(sessions)} unmined session(s) — recording before compaction"),
+        "hookSpecificOutput": {"hookEventName": "PreCompact",
+                               "additionalContext": context},
+    })
+
+
+if __name__ == "__main__":
+    main()

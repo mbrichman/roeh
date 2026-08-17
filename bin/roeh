@@ -1,0 +1,418 @@
+#!/usr/bin/env python3
+"""roeh — the decision-trace CLI.
+
+Every other piece of this plugin (the Oracle, the scribe, the hooks, the
+skills) resolves paths and staleness through this one binary. That is
+deliberate: the alternative is each component carrying its own copy of "where
+does the trace live", which is exactly how a tool ends up with four subtly
+different answers and no one able to say which is authoritative.
+
+Subcommands:
+  init      write .claude/roeh.json + the trace skeleton
+  config    resolve and print the effective config
+  status    is the record behind the work? (commits / sessions / memory)
+  append    APPEND to the trace — the only supported write path
+  sessions  list this project's Claude Code transcripts, mined or not
+  slug      compute the Claude Code project-directory slug for a path
+  mark      record that a session/commit has been folded into the trace
+
+No third-party dependencies, by design: this runs inside hooks, where a
+missing import is a silent failure at the worst possible moment.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+CONFIG_NAME = "roeh.json"
+STATE_NAME = "roeh-state.json"
+SCHEMA_VERSION = 1
+
+
+# ---------------------------------------------------------------- utilities
+
+def die(msg, code=1):
+    print(f"roeh: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def run(args, cwd=None, timeout=15):
+    """Run a command, returning stdout or "" — never raising.
+
+    Hooks must not crash the session. A git call that fails (not a repo, git
+    absent, a corrupt index) degrades to "no evidence of work", which makes
+    the caller quieter, not louder. Failing open is the safe direction here.
+    """
+    try:
+        p = subprocess.run(args, cwd=cwd, capture_output=True, text=True,
+                           timeout=timeout)
+        return p.stdout.strip()
+    except Exception:
+        return ""
+
+
+def slug_for(path):
+    """Claude Code's project-directory slug: '/' and '.' both become '-'.
+
+    /Users/x/projects/scry        -> -Users-x-projects-scry
+    /Users/x/.claude/projects     -> -Users-x--claude-projects
+    """
+    return re.sub(r"[/.]", "-", os.path.abspath(path))
+
+
+def find_project_root(start):
+    """Walk up for .claude/roeh.json, then .claude/, then .git/.
+
+    Order matters: an explicitly configured project wins over an inferred one,
+    so a repo containing a sub-project with its own config resolves to the
+    sub-project when you are inside it.
+    """
+    cur = os.path.abspath(start)
+    for probe in (os.path.join(".claude", CONFIG_NAME), ".claude", ".git"):
+        d = cur
+        while True:
+            if os.path.exists(os.path.join(d, probe)):
+                return d
+            parent = os.path.dirname(d)
+            if parent == d:
+                break
+            d = parent
+    return cur
+
+
+# ------------------------------------------------------------------- config
+
+def default_config(root, mode="repo"):
+    """Placement defaults differ by mode, and the difference is the point.
+
+    repo  — the trace is a project artifact: versioned, diffable, reviewable,
+            backed up with everything else, readable by teammates and CI.
+    local — the trace never enters git. For projects whose rationale contains
+            material that must not leave the machine (real names of third
+            parties, bereavement or crisis content, client confidences). The
+            recorded reasoning for that posture is that an append-only file of
+            *why* is far more sensitive than the code it explains.
+    """
+    if mode == "local":
+        trace = os.path.join(
+            os.path.expanduser("~/.claude/projects"), slug_for(root),
+            "memory", "decision-trace.md")
+    else:
+        trace = "docs/decision-trace.md"
+    return {
+        "version": SCHEMA_VERSION,
+        "mode": mode,
+        "trace": trace,
+        "profile": ".claude/roeh-profile.md",
+        "state": ".claude/" + STATE_NAME,
+        "repo": ".",
+        "sessions_dir": os.path.join(
+            os.path.expanduser("~/.claude/projects"), slug_for(root)),
+        "precompact": {"block_manual": True, "nag_auto": True},
+        "sovereignty": {"local_only": mode == "local",
+                        "network_forbidden": True},
+        "gate": {"enabled": False},
+    }
+
+
+def config_path(root):
+    return os.path.join(root, ".claude", CONFIG_NAME)
+
+
+def load_config(start=None):
+    root = find_project_root(start or os.environ.get("CLAUDE_PROJECT_DIR")
+                             or os.getcwd())
+    cp = config_path(root)
+    cfg = default_config(root)
+    if os.path.exists(cp):
+        try:
+            with open(cp) as f:
+                cfg.update(json.load(f))
+        except Exception as e:
+            die(f"could not parse {cp}: {e}")
+        cfg["_configured"] = True
+    else:
+        cfg["_configured"] = False
+    cfg["_root"] = root
+
+    def abspath(p):
+        p = os.path.expanduser(p)
+        return p if os.path.isabs(p) else os.path.normpath(os.path.join(root, p))
+
+    for key in ("trace", "profile", "state", "repo", "sessions_dir"):
+        cfg[key + "_abs"] = abspath(cfg[key])
+    return cfg
+
+
+def load_state(cfg):
+    try:
+        with open(cfg["state_abs"]) as f:
+            return json.load(f)
+    except Exception:
+        return {"mined_sessions": {}, "last_commit": None, "last_ingest": None}
+
+
+def save_state(cfg, state):
+    os.makedirs(os.path.dirname(cfg["state_abs"]), exist_ok=True)
+    with open(cfg["state_abs"], "w") as f:
+        json.dump(state, f, indent=2, sort_keys=True)
+
+
+# ------------------------------------------------------------------- status
+
+def sessions_for(cfg):
+    """Top-level transcripts for this project, newest first.
+
+    Subagent transcripts (sessions/<id>/subagents/*.jsonl) are excluded: they
+    are the system's own emissions, and mining them for "learnings" is the
+    hall-of-mirrors failure this whole apparatus exists to prevent.
+    """
+    d = cfg["sessions_dir_abs"]
+    if not os.path.isdir(d):
+        return []
+    out = []
+    for name in os.listdir(d):
+        if not name.endswith(".jsonl"):
+            continue
+        p = os.path.join(d, name)
+        if not os.path.isfile(p):
+            continue
+        out.append({"id": name[:-6], "path": p,
+                    "size": os.path.getsize(p),
+                    "mtime": os.path.getmtime(p)})
+    return sorted(out, key=lambda s: s["mtime"], reverse=True)
+
+
+def status(cfg):
+    st = load_state(cfg)
+    exists = os.path.exists(cfg["trace_abs"])
+    trace_mtime = os.path.getmtime(cfg["trace_abs"]) if exists else 0
+
+    # Commits are measured against the trace's own mtime rather than a stored
+    # SHA: the trace is edited by hand as often as by the scribe, and mtime is
+    # the one signal that stays honest across both.
+    commits = []
+    if exists and os.path.isdir(os.path.join(cfg["repo_abs"], ".git")):
+        raw = run(["git", "-C", cfg["repo_abs"], "log", "--all",
+                   "--since", f"@{int(trace_mtime)}",
+                   "--format=%h\t%an\t%s"])
+        for line in raw.splitlines():
+            parts = line.split("\t", 2)
+            if len(parts) == 3:
+                commits.append({"sha": parts[0], "author": parts[1],
+                                "subject": parts[2]})
+
+    mined = st.get("mined_sessions", {})
+    unmined = [s for s in sessions_for(cfg)
+               if s["id"] not in mined or mined[s["id"]].get("mtime", 0) < s["mtime"]]
+
+    # A memory directory is optional — plenty of projects have none.
+    mem_dir = os.path.join(os.path.expanduser("~/.claude/projects"),
+                           slug_for(cfg["_root"]), "memory")
+    mem_changed = []
+    if exists and os.path.isdir(mem_dir):
+        for name in sorted(os.listdir(mem_dir)):
+            if not name.endswith(".md") or name == "decision-trace.md":
+                continue
+            p = os.path.join(mem_dir, name)
+            if os.path.getmtime(p) > trace_mtime:
+                mem_changed.append(name)
+
+    return {
+        "initialized": cfg["_configured"],
+        "trace": cfg["trace_abs"],
+        "trace_exists": exists,
+        "trace_mtime": trace_mtime,
+        "hours_since": (time.time() - trace_mtime) / 3600.0 if exists else None,
+        "trace_bytes": os.path.getsize(cfg["trace_abs"]) if exists else 0,
+        "trace_lines": sum(1 for _ in open(cfg["trace_abs"], errors="ignore"))
+                       if exists else 0,
+        "commits": commits,
+        "unmined_sessions": [{"id": s["id"], "size": s["size"],
+                              "path": s["path"]} for s in unmined],
+        "memory_changed": mem_changed,
+        "behind": bool(commits or unmined or mem_changed),
+    }
+
+
+# -------------------------------------------------------------- subcommands
+
+def cmd_init(args):
+    mode = "local" if "--local" in args else "repo"
+    root = find_project_root(os.getcwd())
+    cfg = default_config(root, mode)
+    if "--trace" in args:
+        cfg["trace"] = args[args.index("--trace") + 1]
+    cp = config_path(root)
+    if os.path.exists(cp) and "--force" not in args:
+        die(f"{cp} already exists (use --force to overwrite)")
+    os.makedirs(os.path.dirname(cp), exist_ok=True)
+    with open(cp, "w") as f:
+        json.dump(cfg, f, indent=2, sort_keys=True)
+    print(cp)
+
+
+def cmd_config(args):
+    cfg = load_config()
+    print(json.dumps({k: v for k, v in cfg.items() if not k.startswith("_")}
+                     | {"root": cfg["_root"], "configured": cfg["_configured"]},
+                     indent=2, sort_keys=True))
+
+
+def cmd_status(args):
+    cfg = load_config()
+    s = status(cfg)
+    if "--json" in args:
+        print(json.dumps(s, indent=2, sort_keys=True))
+        return
+    if not s["trace_exists"]:
+        print(f"no trace at {s['trace']} — run /roeh:ingest to build one")
+        return
+    print(f"trace: {s['trace']}")
+    print(f"       {s['trace_lines']} lines / {s['trace_bytes']//1024}KB, "
+          f"written {s['hours_since']:.1f}h ago")
+    if not s["behind"]:
+        print("status: current — no commits, sessions or memory changes since")
+        return
+    if s["commits"]:
+        print(f"behind: {len(s['commits'])} commit(s) unrecorded")
+        for c in s["commits"][:15]:
+            print(f"        - {c['sha']} {c['subject']}")
+    if s["unmined_sessions"]:
+        print(f"behind: {len(s['unmined_sessions'])} unmined session(s)")
+    if s["memory_changed"]:
+        print(f"behind: {len(s['memory_changed'])} memory file(s) changed")
+
+
+def cmd_append(args):
+    """The ONLY write path to the trace, and it can only ever append.
+
+    scry's original design forbade the scribe from writing at all, on the
+    reasoning that "an agent with write access to an append-only file is one
+    bad edit from destroying the record it exists to protect." That reasoning
+    is about Write/Edit, which can truncate. This opens the file in 'a' mode
+    and never seeks: rewriting an existing entry is not expressible through
+    this interface, so the guarantee is structural rather than honour-system.
+    """
+    cfg = load_config()
+    if not os.path.exists(cfg["trace_abs"]):
+        die(f"no trace at {cfg['trace_abs']} — run /roeh:ingest first")
+    text = sys.stdin.read() if ("-" in args or not args) else open(args[0]).read()
+    if not text.strip():
+        die("refusing to append empty content")
+    before = os.path.getsize(cfg["trace_abs"])
+    # Check the final byte rather than reading the file: the trace is the one
+    # artifact guaranteed to grow without bound, and this runs on every append.
+    needs_nl = False
+    if before:
+        with open(cfg["trace_abs"], "rb") as f:
+            f.seek(-1, os.SEEK_END)
+            needs_nl = f.read(1) != b"\n"
+    with open(cfg["trace_abs"], "a") as f:
+        if needs_nl:
+            f.write("\n")
+        f.write(text if text.endswith("\n") else text + "\n")
+    after = os.path.getsize(cfg["trace_abs"])
+    print(f"appended {after - before} bytes to {cfg['trace_abs']}")
+
+
+def cmd_sessions(args):
+    cfg = load_config()
+    st = load_state(cfg)
+    mined = st.get("mined_sessions", {})
+    only_unmined = "--unmined" in args
+    rows = []
+    for s in sessions_for(cfg):
+        is_mined = (s["id"] in mined
+                    and mined[s["id"]].get("mtime", 0) >= s["mtime"])
+        if only_unmined and is_mined:
+            continue
+        rows.append((s["id"], s["size"], "mined" if is_mined else "UNMINED",
+                     s["path"]))
+    if "--json" in args:
+        print(json.dumps([{"id": r[0], "size": r[1], "state": r[2],
+                           "path": r[3]} for r in rows], indent=2))
+        return
+    for r in rows:
+        print(f"{r[2]:8} {r[1]//1024:>7}KB  {r[0]}  {r[3]}")
+
+
+def cmd_mark(args):
+    """Record that a session has been folded in, so refresh stays incremental."""
+    cfg = load_config()
+    st = load_state(cfg)
+    for sid in [a for a in args if not a.startswith("-")]:
+        match = [s for s in sessions_for(cfg) if s["id"].startswith(sid)]
+        if not match:
+            die(f"no session matching {sid}")
+        s = match[0]
+        st.setdefault("mined_sessions", {})[s["id"]] = {
+            "mtime": s["mtime"], "size": s["size"], "at": time.time()}
+        print(f"marked {s['id']} as mined")
+    save_state(cfg, st)
+
+
+def cmd_slug(args):
+    print(slug_for(args[0] if args else os.getcwd()))
+
+
+PENDING_NAME = "roeh-pending.json"
+PENDING_TTL = 600  # seconds
+
+
+def pending_path(cfg):
+    return os.path.join(os.path.dirname(cfg["state_abs"]), PENDING_NAME)
+
+
+def cmd_pending(args):
+    """The handshake between the PreCompact command hook and the scribe.
+
+    Hook handlers within one event have no documented execution order, so the
+    scribe cannot rely on being told "you were dispatched by the gate". The
+    command hook drops this sentinel; the scribe reads it and switches to
+    RECORD mode. Stale sentinels expire, so a scribe consulted by hand an hour
+    later does not silently start writing to the record.
+    """
+    cfg = load_config()
+    p = pending_path(cfg)
+    if "--write" in args:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        payload = json.load(sys.stdin)
+        payload["at"] = time.time()
+        with open(p, "w") as f:
+            json.dump(payload, f, indent=2)
+        return
+    if "--clear" in args:
+        if os.path.exists(p):
+            os.remove(p)
+        return
+    try:
+        with open(p) as f:
+            payload = json.load(f)
+    except Exception:
+        sys.exit(1)  # nothing pending — non-zero so `roeh pending || …` works
+    if time.time() - payload.get("at", 0) > PENDING_TTL:
+        os.remove(p)
+        sys.exit(1)
+    print(json.dumps(payload, indent=2, sort_keys=True))
+
+
+COMMANDS = {"init": cmd_init, "config": cmd_config, "status": cmd_status,
+            "append": cmd_append, "sessions": cmd_sessions, "mark": cmd_mark,
+            "slug": cmd_slug, "pending": cmd_pending}
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
+        print(__doc__)
+        sys.exit(0)
+    cmd = sys.argv[1]
+    if cmd not in COMMANDS:
+        die(f"unknown command '{cmd}' (try: {', '.join(sorted(COMMANDS))})")
+    COMMANDS[cmd](sys.argv[2:])
+
+
+if __name__ == "__main__":
+    main()

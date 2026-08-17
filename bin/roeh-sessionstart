@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""SessionStart — put the record back in front of the model.
+
+Two distinct jobs, keyed on `trigger`:
+
+  compact / clear / fork
+      The context that just died is not coming back. Inject the trace pointer
+      and §5 RESUME STATE verbatim so the fresh context starts knowing where
+      the project actually is. This is the half that makes an append-only
+      trace *work* — writing it is pointless if nothing reads it back.
+
+  startup / resume
+      A cheap staleness line, plus the standing instruction to consult the
+      oracle BEFORE re-deriving a decision. The failure this exists to stop is
+      not ignorance, it is confident re-derivation of something already
+      settled — which only ever happens at the start of a session.
+
+Reads no more than RESUME_BUDGET of §5 so a large trace cannot crowd out the
+context it is meant to inform.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+RESUME_BUDGET = 6000
+
+
+def out(payload, context=None):
+    if context:
+        payload.setdefault("hookSpecificOutput", {})
+        payload["hookSpecificOutput"]["hookEventName"] = "SessionStart"
+        payload["hookSpecificOutput"]["additionalContext"] = context
+    print(json.dumps(payload))
+    sys.exit(0)
+
+
+def section(path, marker):
+    """Pull one §N section out of the trace.
+
+    Deliberately tolerant of heading depth and of '§5'/'5.' styles: the trace
+    is hand-edited by a human under time pressure, and a fragile parser here
+    would silently return nothing exactly when the record matters most.
+    """
+    try:
+        text = open(path, errors="ignore").read()
+    except Exception:
+        return ""
+    pat = re.compile(rf"^#{{1,6}}\s*(?:§\s*)?{marker}\b.*$", re.M)
+    m = pat.search(text)
+    if not m:
+        return ""
+    start = m.start()
+    nxt = re.compile(r"^#{1,6}\s*(?:§\s*)?\d+\b", re.M).search(text, m.end())
+    body = text[start:nxt.start() if nxt else len(text)]
+    if len(body) > RESUME_BUDGET:
+        body = body[:RESUME_BUDGET] + "\n\n…[§5 truncated — read the file for the rest]"
+    return body.strip()
+
+
+def main():
+    try:
+        event = json.load(sys.stdin)
+    except Exception:
+        event = {}
+    trigger = event.get("trigger", "startup")
+    cwd = event.get("cwd") or os.getcwd()
+
+    try:
+        raw = subprocess.run([sys.executable, os.path.join(HERE, "roeh"),
+                              "status", "--json"],
+                             cwd=cwd, capture_output=True, text=True,
+                             timeout=20).stdout
+        st = json.loads(raw)
+    except Exception:
+        out({})
+
+    if not st.get("trace_exists"):
+        # Only advertise on a real session start; not worth a line mid-compact.
+        if trigger in ("startup", "resume") and st.get("initialized"):
+            out({"systemMessage": "roeh: no decision trace yet — /roeh:ingest"})
+        out({})
+
+    trace = st["trace"]
+    header = (
+        f"⭑ DECISION TRACE: {trace} ({st['trace_lines']} lines)\n"
+        "This project keeps an append-only record of WHY things were decided — "
+        "decisions, dead-ends, reversals, lessons. Consult the `oracle` agent "
+        "BEFORE re-deriving any architecture, eval, model choice or design "
+        "decision, and before re-walking anything that might be a known "
+        "dead-end. The oracle answers 'why'; it cites the record.\n"
+    )
+
+    if trigger in ("compact", "clear", "fork"):
+        resume = section(trace, "5")
+        body = header + (
+            "\nThe context that preceded this point is gone. The record is not. "
+            "Below is §5 RESUME STATE verbatim — treat it as authoritative on "
+            "where the project stands, and re-read the full trace before any "
+            "structural decision.\n\n" + resume if resume else
+            "\n§5 RESUME STATE is missing from the trace — read the last dated "
+            "chapter of §3 before proceeding.")
+        out({}, body)
+
+    stale = ""
+    bits = []
+    if st.get("behind"):
+        if st["commits"]:
+            bits.append(f"{len(st['commits'])} unrecorded commit(s)")
+        if st["unmined_sessions"]:
+            bits.append(f"{len(st['unmined_sessions'])} unmined session(s)")
+        if st["memory_changed"]:
+            bits.append(f"{len(st['memory_changed'])} changed memory file(s)")
+        stale = (f"\n⚠️ The record is BEHIND THE WORK: {', '.join(bits)}. "
+                 "Run /roeh:refresh to reconcile before relying on the oracle "
+                 "for anything touching recent work — an answer sourced from a "
+                 "stale record reads exactly like an answer sourced from a "
+                 "current one.\n")
+
+    out({"systemMessage":
+         (f"⚠️  roeh: trace is behind ({', '.join(bits)}) — /roeh:refresh"
+          if stale else
+          f"✓ roeh: trace current ({st['trace_lines']} lines)")},
+        header + stale)
+
+
+if __name__ == "__main__":
+    main()

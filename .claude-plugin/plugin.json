@@ -1,0 +1,16 @@
+{
+  "name": "roeh",
+  "description": "רואה — the seer. An append-only decision trace for your project, an Oracle that answers 'why did we do X' from the record, and a scribe that writes to it before compaction discards the reasoning.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Dov Richman"
+  },
+  "keywords": [
+    "memory",
+    "decision-record",
+    "adr",
+    "context",
+    "compaction",
+    "provenance"
+  ]
+}

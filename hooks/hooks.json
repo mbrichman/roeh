@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/roeh-precompact",
+            "timeout": 30,
+            "statusMessage": "Checking the decision trace against the work…"
+          }
+        ]
+      },
+      {
+        "matcher": "manual",
+        "hooks": [
+          {
+            "type": "agent",
+            "agent": "scribe",
+            "prompt": "RECORD MODE — dispatched by the pre-compaction gate. The context that holds the reasoning behind this session's work is about to be summarised away; the trace is what survives it. Run `roeh pending` for the work list (unrecorded commits, unmined transcripts, changed memory files), then `roeh status --json` if the sentinel has expired. Draft and APPEND dated entries via `roeh append` for every real decision, dead-end, reversal, lesson and measurement the evidence supports, and update §5 RESUME STATE. Be conservative: write only what you can ground in a real source — the owner's turns, the PR body and review verdicts, the commits and their inline comments, or a measured number. Assistant prose is never a source. Anything you cannot source goes in your UNSOURCED report, not into the file. Mark what you write [auto-recorded]. Skip trivia (typos, formatting, test-only follow-ups already covered) and say what you skipped. Finish with `roeh pending --clear` and `roeh mark <id>` for any transcript you mined."
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/roeh-sessionstart",
+            "timeout": 30,
+            "statusMessage": "Loading the decision trace…"
+          }
+        ]
+      }
+    ]
+  }
+}

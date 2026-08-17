@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Per-machine watermarks written into a *consuming* project, never into this repo.
+# Listed here so a copy-paste of these names into a project .gitignore is one step.
+.claude/roeh-state.json
+.claude/roeh-pending.json
