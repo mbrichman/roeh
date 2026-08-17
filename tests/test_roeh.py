@@ -658,6 +658,20 @@ class TestSessionStartHook(RoehCase):
         self.assertNotIn("Why this file exists", ctx,
                          "§5 extraction leaked other sections")
 
+    def test_compact_injects_the_LAST_resume_state(self):
+        """Append-only means §5 is superseded by appending a new §5. Reading the
+        first one hands a stale state to the one context that cannot check it."""
+        self.init()
+        self.make_trace()
+        self.roeh("append", "-", stdin=(
+            "\n## §5 — Resume state (superseding)\n\n"
+            "- **Where we are:** NEWEST-STATE-MARKER\n"))
+        _, out, _ = self.hook(SESSIONSTART, {"trigger": "compact"})
+        ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("NEWEST-STATE-MARKER", ctx)
+        self.assertNotIn("Currently gated on", ctx,
+                         "injected the superseded §5 instead of the latest")
+
     def test_startup_reports_current(self):
         self.init()
         self.make_trace()

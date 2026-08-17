@@ -11,7 +11,7 @@
     {
       "name": "roeh",
       "source": "./",
-      "version": "0.3.5",
+      "version": "0.3.6",
       "description": "רואה — the seer. An append-only decision trace for your project, an Oracle that answers 'why did we do X' from the record with citations, and a scribe that writes to it before compaction discards the reasoning."
     }
   ]

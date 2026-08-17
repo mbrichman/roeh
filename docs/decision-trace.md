@@ -283,3 +283,78 @@ commit bodies are the primary source and are mined directly.
   and replaced with the mechanism that actually holds: read-at-commit plus a drift check.
   A README limitations section now states what is NOT fixed — a comment wrong when
   written, or aspirational, is recorded faithfully as what someone believed.
+
+### 2026-08-17 — first refresh
+
+*Two commits of delta plus the first drift check. Single-pass; a two-commit delta does not
+warrant a fan-out.*
+
+- **[DECISION] The README's competitive claims are researched, not asserted.** The owner's
+  framing was that "virtually all other products exclude git diffs and code comments." A
+  search found that false as stated — [Lore](https://arxiv.org/abs/2603.15566) restructures
+  commit messages via native git trailers, [Deciduous](https://deciduous.dev/) builds
+  decision graphs from existing git history, and compaction-gating is not unique either.
+  REJECTED: publishing the sweeping claim, which would have been wrong and unfair in a
+  public README. The defensible claim is narrower and more interesting: reading the **diff
+  body and the inline comments inside it**, for which no other tool was found. Lore is
+  credited rather than contrasted — its abstract states the shared problem better than we
+  did ("Each commit captures a code diff but discards the reasoning behind it") — and the
+  two point in opposite time directions, prospective encoding versus retrospective
+  excavation, so they compose. A "what is NOT unique" subsection was added deliberately.
+  GATES: any future comparative claim gets verified before it ships. Cite: `b152c93`.
+
+- **[CORRECTION — to the three comment-staleness entries above]** They were appended
+  before the work was committed, so they cite skill-file sections rather than a SHA. The
+  commit is `391d34c`. Recording the entry before the commit exists is a real ordering
+  hazard of writing the record by hand; the scribe dispatched by the gate does not have
+  it, because it runs after the work.
+
+- **[CORRECTION — to §5 "Where we are"]** It records v0.3.4. Actual is **v0.3.5** as of
+  `391d34c`. Caught by the drift check, not by anything that fires automatically — a
+  version string inside prose is invisible to `roeh doctor`, which checks the config
+  schema and the trace's structure but never the trace's *claims*.
+
+- **[GOTCHA] Test invocations create session transcripts indistinguishable from real work.**
+  Driving the Oracle with `claude --plugin-dir . -p "..."` from inside the repo leaves a
+  `.jsonl` that `roeh sessions` reports as UNMINED, exactly like a genuine working session.
+  Mining it would fold the tool's own test harness into the record. Marked mined after
+  inspection. No automatic way to tell the two apart currently exists; the mitigation is
+  that a human reads the first turn before mining, which is a weak mitigation.
+
+- **[LESSON] The first drift check found the record's citations sound and its prose stale.**
+  All twelve SHA citations resolve. The staleness ledger's own claims still hold. What had
+  rotted was an unstructured sentence in §5. **Structured citations survive; prose claims
+  drift** — which argues for keeping status assertions out of prose and in fields that
+  something can check.
+
+- **[OPEN] This trace predates the `file:line@sha` convention** introduced at `391d34c`, so
+  it carries zero comment-sourced citations and the new comment-drift check had nothing to
+  verify. The convention applies to entries written from here on; the existing chapter will
+  not be retrofitted, because rewriting entries is exactly what this file forbids.
+
+---
+
+## §5 — Resume state (superseding the §5 above, 2026-08-17)
+
+*The §5 above is retained as written. This block supersedes it.*
+
+- **Where we are:** v0.3.5, published at `github.com/mbrichman/roeh`, MIT, marketplace
+  live. 66 tests green, CI green on Linux and macOS, four prompt contracts passing.
+  First refresh complete.
+- **Currently gated on:** nothing.
+- **Next:** nothing committed. Candidates only — `doctor` cannot detect agents shadowed by
+  a project-level `.claude/agents/` copy, nor distinguish a test transcript from a real
+  one; `claude plugin eval` migration once it leaves early access.
+- **Do not re-derive:** everything in the previous §5, plus —
+  - Mining comments at HEAD rather than at their commit (`391d34c`).
+  - Sweeping competitive claims in the README; verify first (`b152c93`).
+
+- **[GOTCHA] `SessionStart` was injecting the SUPERSEDED §5.** `section()` took the first
+  regex match, but in an append-only file a section is superseded by appending a new copy
+  of it — so the first `§5` is the *oldest* resume state. The hook was handing a stale
+  state to the one context that has nothing else to check it against, which is precisely
+  the failure it exists to prevent. Now takes the **last** match. Found within minutes of
+  appending this refresh's own §5, i.e. by the tool being used as designed. REJECTED:
+  editing the old §5 in place, which would have hidden the bug rather than exposing it.
+  Cite: `bin/roeh-sessionstart` `section()`; regression test
+  `test_compact_injects_the_LAST_resume_state`.

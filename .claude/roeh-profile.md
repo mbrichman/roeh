@@ -62,6 +62,9 @@ Do not infer or record a personal name — that is itself a recorded principle h
 | Putting prompt evals in `tests/run` | They call a model; the cheap tier must stay cheap or it stops being run. | `b70483e` |
 | Blocking auto-compaction | The window is already full; refusing there can wedge the session. | `b8de529` |
 | Trusting a sandboxed fixture to catch environment bugs | Fixtures have clean ancestors by construction; the root-resolution bug needed a dirty one. | `ddad17b` |
+| Mining inline comments at HEAD | Comments go stale. Read them at their commit and cite `file:line@sha`. | `391d34c` |
+| Sweeping competitive claims in the README | Several tools already read git; verify before publishing. | `b152c93` |
+| Reading the FIRST `§N` heading in the trace | Append-only means sections are superseded by appending; the first is the oldest. | `bin/roeh-sessionstart` |
 
 ## Gate wiring
 

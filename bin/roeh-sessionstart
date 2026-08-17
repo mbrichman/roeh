@@ -49,9 +49,16 @@ def section(path, marker):
     except Exception:
         return ""
     pat = re.compile(rf"^#{{1,6}}\s*(?:§\s*)?{marker}\b.*$", re.M)
-    m = pat.search(text)
-    if not m:
+    hits = list(pat.finditer(text))
+    if not hits:
         return ""
+    # LAST occurrence, not first. The file is append-only, so a section is
+    # superseded by appending a new copy of it rather than editing the old one
+    # — which means the first §5 in the file is the oldest resume state, not
+    # the current one. Reading the first injected a stale state into the very
+    # context that has nothing else to check it against, which is the precise
+    # failure this hook exists to prevent. Found by refreshing roeh's own trace.
+    m = hits[-1]
     start = m.start()
     nxt = re.compile(r"^#{1,6}\s*(?:§\s*)?\d+\b", re.M).search(text, m.end())
     body = text[start:nxt.start() if nxt else len(text)]
