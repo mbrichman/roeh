@@ -8,6 +8,23 @@ disable-model-invocation: true
 Set this project up for a decision trace. Cheap and non-destructive; the expensive part
 is `/roeh:ingest`, which comes after.
 
+## 0. If it is already initialised, say so and stop
+
+Run `roeh init` first and read what it says. If the project is already set up it prints
+the current mode, trace and profile, then refuses without changing anything. **Report
+that to the owner and ask what they actually wanted** — do not reach for `--force`
+uninvited. Almost always the answer is one of:
+
+- *"is it healthy?"* → `roeh doctor`
+- *"the record is behind"* → `/roeh:refresh`
+- *"a newer roeh added config keys"* → `roeh init --force` or `roeh doctor --fix`, both
+  of which **merge**: existing values win and only gaps are filled.
+
+`init --force` will refuse outright to repoint the trace while a record exists, or to
+flip a `local`-mode project to `repo` mode. Those refusals are correct — never work
+around them by editing the config yourself. Moving an append-only record is the owner's
+decision to make deliberately, with the file in their hands.
+
 ## 1. Decide placement — ask, don't assume
 
 The one decision that matters, because it is annoying to change later:

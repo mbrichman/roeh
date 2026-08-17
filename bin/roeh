@@ -38,6 +38,10 @@ SCHEMA_VERSION = 1
 # ---------------------------------------------------------------- utilities
 
 def die(msg, code=1):
+    # Flush stdout first: several commands print context (the current config,
+    # the two competing paths) and THEN refuse. Unflushed, the refusal lands
+    # above the context that explains it.
+    sys.stdout.flush()
     print(f"roeh: {msg}", file=sys.stderr)
     sys.exit(code)
 
@@ -244,18 +248,100 @@ def status(cfg):
 # -------------------------------------------------------------- subcommands
 
 def cmd_init(args):
-    mode = "local" if "--local" in args else "repo"
+    """Initialise, or repair — but never silently orphan a record.
+
+    `--force` used to overwrite the config wholesale. That is a trap: it resets
+    mode, trace path and gate to defaults, so a `local`-mode project (chosen
+    because its rationale must never enter git) silently became `repo` mode
+    pointing at a path with nothing in it — and `roeh status` then said "no
+    trace, run /roeh:ingest", inviting a SECOND record while the first sat
+    there intact and unreferenced. Two records is the one outcome worse than
+    none, because neither is authoritative.
+
+    So --force now MERGES: existing values win, only gaps are filled, and only
+    explicit flags change anything. Repointing away from an existing trace is
+    refused outright.
+    """
     root = find_project_root(os.getcwd())
+    cp = config_path(root)
+    existing = None
+    if os.path.exists(cp):
+        try:
+            with open(cp) as f:
+                existing = json.load(f)
+        except Exception as e:
+            die(f"could not parse {cp}: {e}")
+
+    # Only an explicit flag chooses a mode; absence is not a vote for "repo".
+    mode = ("local" if "--local" in args else
+            "repo" if "--repo" in args else
+            (existing or {}).get("mode", "repo"))
     cfg = default_config(root, mode)
+
+    if existing is not None:
+        if "--force" not in args:
+            cur = load_config()
+            print(f"already initialised: {cp}")
+            print(f"  mode:    {existing.get('mode')}")
+            print(f"  trace:   {cur['trace_abs']}"
+                  + ("" if os.path.exists(cur["trace_abs"]) else "   (missing)"))
+            print(f"  profile: {existing.get('profile')}")
+            die("nothing changed. `roeh doctor` checks it; `roeh init --force` "
+                "repairs missing keys (merging, never resetting)", 1)
+        # Merge: on-disk values win over defaults, so customisation survives.
+        merged = dict(cfg)
+        merged.update(existing)
+        cfg = merged
+        cfg["mode"] = mode
+
     if "--trace" in args:
         cfg["trace"] = args[args.index("--trace") + 1]
-    cp = config_path(root)
-    if os.path.exists(cp) and "--force" not in args:
-        die(f"{cp} already exists (use --force to overwrite)")
+    elif existing is not None and mode != existing.get("mode"):
+        # A deliberate mode switch implies the default path for the new mode.
+        cfg["trace"] = default_config(root, mode)["trace"]
+
+    # --- refuse to strand an existing record ------------------------------
+    if existing is not None:
+        old = load_config()
+        new_trace = os.path.expanduser(cfg["trace"])
+        if not os.path.isabs(new_trace):
+            new_trace = os.path.normpath(os.path.join(root, new_trace))
+        # Sovereignty first: a local->repo flip also repoints, so the generic
+        # orphan message would otherwise win and bury the reason that matters.
+        if (existing.get("mode") == "local" and mode == "repo"
+                and os.path.exists(old["trace_abs"])):
+            die("refusing to switch a project with an existing record from "
+                "'local' to 'repo' mode.\n"
+                "       local mode was chosen because this trace must not enter "
+                "git. Flipping it makes the next `git add -A` publish every "
+                "rationale in the file — and in a shared repo, republish it to "
+                "everyone with read access.\n"
+                f"       current record: {old['trace_abs']}\n"
+                "       If that is genuinely intended, move the file yourself "
+                f"and edit mode in {cp} by hand — deliberately, not as a side "
+                "effect of re-running init.")
+        if new_trace != old["trace_abs"] and os.path.exists(old["trace_abs"]):
+            die(f"refusing to repoint the trace while a record exists.\n"
+                f"       current: {old['trace_abs']}\n"
+                f"       would be: {new_trace}\n"
+                "       The existing record would still be on disk but nothing "
+                "would reference it, and `roeh status` would then tell you to "
+                "ingest — building a second, competing history.\n"
+                "       Move the file yourself first, then re-run. roeh will "
+                "not relocate an append-only record on your behalf.")
+
+    cfg["version"] = SCHEMA_VERSION
     os.makedirs(os.path.dirname(cp), exist_ok=True)
     with open(cp, "w") as f:
         json.dump(cfg, f, indent=2, sort_keys=True)
-    print(cp)
+
+    if existing is None:
+        print(f"initialised {cp}  (mode: {mode})")
+    else:
+        changed = [k for k in cfg if existing.get(k) != cfg[k]]
+        print(f"repaired {cp}"
+              + (f"  changed: {', '.join(changed)}" if changed else
+                 "  (nothing needed changing)"))
 
 
 def cmd_config(args):
