@@ -203,14 +203,26 @@ def status(cfg):
     # the one signal that stays honest across both.
     commits = []
     if exists and os.path.isdir(os.path.join(cfg["repo_abs"], ".git")):
+        # `--since @N` is inclusive, so a commit made in the SAME second as the
+        # trace write came back as unrecorded — a project read as "behind" the
+        # instant after it was recorded, which spuriously blocks /compact.
+        # Widen the git filter and compare committer timestamps ourselves.
+        # File mtimes carry sub-second precision and commit dates do not, so a
+        # commit that genuinely preceded the write sorts below it and drops out.
         raw = run(["git", "-C", cfg["repo_abs"], "log", "--all",
-                   "--since", f"@{int(trace_mtime)}",
-                   "--format=%h\t%an\t%s"])
+                   "--since", f"@{int(trace_mtime) - 1}",
+                   "--format=%h\t%ct\t%an\t%s"])
         for line in raw.splitlines():
-            parts = line.split("\t", 2)
-            if len(parts) == 3:
-                commits.append({"sha": parts[0], "author": parts[1],
-                                "subject": parts[2]})
+            parts = line.split("\t", 3)
+            if len(parts) != 4:
+                continue
+            try:
+                if float(parts[1]) <= trace_mtime:
+                    continue
+            except ValueError:
+                continue
+            commits.append({"sha": parts[0], "author": parts[2],
+                            "subject": parts[3]})
 
     mined = st.get("mined_sessions", {})
     unmined = [s for s in sessions_for(cfg)
