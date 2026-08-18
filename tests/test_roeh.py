@@ -294,10 +294,17 @@ class TestInit(RoehCase):
 
 class TestStatus(RoehCase):
 
+    def test_uninitialised_project_is_sent_to_init_not_ingest(self):
+        """A new user in an unconfigured repo used to be pointed at step two."""
+        _, out, _ = self.roeh("status")
+        self.assertIn("/roeh:init", out)
+        self.assertNotIn("/roeh:ingest", out)
+
     def test_reports_no_trace(self):
         self.init()
         _, out, _ = self.roeh("status")
         self.assertIn("no trace", out)
+        self.assertIn("/roeh:ingest", out)
 
     def test_clean_when_nothing_happened_since(self):
         self.init()

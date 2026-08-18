@@ -388,6 +388,13 @@ def cmd_status(args):
     if "--json" in args:
         print(json.dumps(s, indent=2, sort_keys=True))
         return
+    if not s["initialized"]:
+        # Distinguish "never set up" from "set up but not yet ingested". Both
+        # used to point at /roeh:ingest, which sends a new user to the second
+        # step and leaves them wondering why nothing resolves.
+        print("roeh is not set up in this project — run /roeh:init first\n"
+              f"  (it would default to: {s['trace']})")
+        return
     if not s["trace_exists"]:
         print(f"no trace at {s['trace']} — run /roeh:ingest to build one")
         return
