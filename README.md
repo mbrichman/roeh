@@ -186,6 +186,11 @@ auto, where the window is already full and refusing can wedge the session.
 
 ## Install
 
+**Requires:** Claude Code, `git`, and **Python 3.8+** on `PATH` as `python3`. No
+third-party packages — `bin/roeh` runs inside hooks, where a missing import is a silent
+failure at the worst possible moment. macOS ships a suitable `python3` once the Xcode
+Command Line Tools are present (`xcode-select --install`).
+
 ```bash
 claude plugin marketplace add mbrichman/roeh
 claude plugin install roeh@roeh

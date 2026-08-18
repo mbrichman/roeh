@@ -14,6 +14,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        # Test the declared floor as well as a current release. bin/roeh runs
+        # inside hooks, where a SyntaxError from a too-new construct is silence
+        # at the worst moment — CI on one modern version would not catch it.
+        python-version: ['3.8', '3.13']
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -25,7 +29,7 @@ jobs:
           # hooks, where a missing import is a silent failure at the worst
           # possible moment. So there is nothing to install here, and this job
           # would catch it if that ever stopped being true.
-          python-version: '3.11'
+          python-version: ${{ matrix.python-version }}
 
       - name: git identity for the throwaway repos the tests create
         run: |

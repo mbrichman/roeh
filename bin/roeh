@@ -37,6 +37,17 @@ CONFIG_NAME = "roeh.json"
 STATE_NAME = "roeh-state.json"
 SCHEMA_VERSION = 1
 
+MIN_PYTHON = (3, 8)
+if sys.version_info < MIN_PYTHON:
+    # Fail loudly and specifically. This runs inside hooks, where the default
+    # failure is silence — the gate simply does not fire and nobody notices
+    # until a decision has already been lost.
+    sys.stderr.write(
+        "roeh requires Python %d.%d or newer; this is %d.%d at %s\n"
+        % (MIN_PYTHON[0], MIN_PYTHON[1], sys.version_info[0],
+           sys.version_info[1], sys.executable))
+    sys.exit(1)
+
 
 # ---------------------------------------------------------------- utilities
 
@@ -377,9 +388,14 @@ def cmd_init(args):
 
 def cmd_config(args):
     cfg = load_config()
-    print(json.dumps({k: v for k, v in cfg.items() if not k.startswith("_")}
-                     | {"root": cfg["_root"], "configured": cfg["_configured"]},
-                     indent=2, sort_keys=True))
+    # Built with dict.update rather than the `|` union operator, which is 3.9+.
+    # A SyntaxError is raised at PARSE time, so it would fire before the version
+    # check above could report it — and inside a hook that surfaces as silence
+    # at the exact moment the record matters. Keep this file parseable by the
+    # oldest Python we claim to support.
+    out = {k: v for k, v in cfg.items() if not k.startswith("_")}
+    out.update({"root": cfg["_root"], "configured": cfg["_configured"]})
+    print(json.dumps(out, indent=2, sort_keys=True))
 
 
 def cmd_status(args):
