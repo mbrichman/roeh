@@ -191,33 +191,70 @@ third-party packages — `bin/roeh` runs inside hooks, where a missing import is
 failure at the worst possible moment. macOS ships a suitable `python3` once the Xcode
 Command Line Tools are present (`xcode-select --install`).
 
+Setup has **two levels**, and conflating them is the usual source of confusion: you
+install the plugin **once per machine**, then enable it **per project**.
+
+### 1. Once per machine
+
 ```bash
 claude plugin marketplace add mbrichman/roeh
 claude plugin install roeh@roeh
 ```
 
-Or, for development against a clone:
+Restart Claude Code afterwards. A newly registered agent is not dispatchable until the
+session restarts — edits to an already-registered one hot-reload, but the first install
+needs the restart before you can consult the Oracle by name.
+
+For development against a clone, point the marketplace at a **directory** instead. This
+also works with no network, which matters when GitHub is having a bad day:
 
 ```bash
 git clone https://github.com/mbrichman/roeh ~/projects/roeh
-claude --plugin-dir ~/projects/roeh
+claude plugin marketplace add ~/projects/roeh
+claude plugin install roeh@roeh
 ```
 
-Then, in your project:
+(`claude --plugin-dir ~/projects/roeh` also works, but only for sessions where you
+remember the flag — and forgetting it silently disables the compaction gate at exactly
+the moment you would want it.)
+
+### 2. Once per project
+
+> **`roeh` is not on your login shell PATH.** The plugin's `bin/` is added to the PATH of
+> Claude Code's Bash tool while the plugin is enabled. So you run `roeh …` *from inside a
+> Claude Code session*, not from your terminal. Everything below assumes you are in one.
 
 ```
-/roeh:init        # choose where the trace lives; write config + skeleton
-/roeh:ingest      # build the record from history
+cd ~/projects/whatever && claude
 ```
+
+then:
+
+```
+/roeh:init        # asks where the trace lives; writes config, skeleton, profile
+/roeh:ingest      # builds the record from history — the expensive step
+```
+
+That is the whole per-project setup. `/roeh:init` is cheap and non-destructive;
+`/roeh:ingest` fans out and costs real money on a long history, so it asks for a history
+floor first and accepts `--quick` for a cheap look.
+
+**Adding roeh to a project that already has a curated record?** Point `init` at it and
+turn off automatic writes — see [read-only mode](#read-only-mode). Nothing is
+regenerated, and no agent gets a write path.
 
 ### Updating
 
 The harness handles the plugin itself — there is no `/roeh:update`, deliberately:
 
 ```bash
-claude plugin update roeh     # marketplace install (restart to apply)
-git pull && /reload-plugins   # --plugin-dir install
+claude plugin marketplace update roeh   # refresh the marketplace (directory or GitHub)
+claude plugin update roeh@roeh          # restart to apply
 ```
+
+Note the `@marketplace` suffix on `update` — plain `claude plugin update roeh` fails with
+`Plugin "roeh" not found`. If your marketplace is a local clone, `git pull` first; if it
+is GitHub, `marketplace update` does the fetching.
 
 What the harness does **not** handle is your *project's* artifacts. `claude plugin
 update` moves the plugin; nothing migrates a `.claude/roeh.json` written by an older
@@ -332,19 +369,31 @@ check passes. Either order is correct.
 
 ## CLI
 
+Available inside a Claude Code session (see [above](#2-once-per-project)) — the plugin
+puts `bin/` on the Bash tool's PATH, not your login shell's.
+
 ```
 roeh init [--local] [--trace PATH]   write .claude/roeh.json
 roeh config                          resolve effective paths
 roeh status [--json]                 is the record behind the work?
+roeh doctor [--fix]                  check artifacts against the running plugin
+
+roeh index                           regenerate <trace>-index.md
+roeh read <§N | chapter>             pull one section or chapter, exactly
+roeh chapters <term>                 which chapters match — never which lines
+
 roeh append [file|-]                 APPEND to the trace (the only write path)
 roeh sessions [--unmined]            this project's transcripts
 roeh mark <session-id>               record a transcript as folded in
-roeh pending [--clear]               the PreCompact → scribe handshake
-roeh slug [path]                     Claude Code project-directory slug
-roeh doctor [--fix]                  check artifacts against the running plugin
 roeh ingest status|begin|done|end|abandon
                                      ingest lifecycle (see below)
+roeh pending [--clear]               the PreCompact → scribe handshake
+roeh slug [path]                     Claude Code project-directory slug
 ```
+
+The middle group is what keeps the Oracle honest once the record outgrows a single read —
+see [What happens when the trace outgrows a single
+read](#what-happens-when-the-trace-outgrows-a-single-read).
 
 ## Running ingest twice
 
