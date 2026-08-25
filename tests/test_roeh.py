@@ -144,6 +144,18 @@ class RoehCase(unittest.TestCase):
         self.git("add", "-A")
         self.git("commit", "-qm", msg)
 
+    def make_session(self, sid, text='{"type":"user"}\n'):
+        """Drop a transcript into this project's sessions dir, as Claude Code
+        would. The default config points sessions_dir at
+        ~/.claude/projects/<slug> under the sandboxed HOME."""
+        _, slug, _ = self.roeh("slug", self.dir)
+        d = os.path.join(self.home, ".claude", "projects", slug.strip())
+        os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, f"{sid}.jsonl")
+        with open(p, "w") as f:
+            f.write(text)
+        return p
+
 
 class TestSlug(RoehCase):
     """The slug maps a project path to its Claude Code transcript directory.
@@ -328,6 +340,45 @@ class TestStatus(RoehCase):
         s = json.loads(out)
         self.assertTrue(s["behind"])
         self.assertEqual(len(s["commits"]), 1)
+
+    def test_counts_an_unmined_session(self):
+        self.init()
+        self.make_trace()
+        self.make_session("live")
+        _, out, _ = self.roeh("status", "--json")
+        s = json.loads(out)
+        self.assertEqual([x["id"] for x in s["unmined_sessions"]], ["live"])
+        self.assertTrue(s["behind"])
+
+    def test_excludes_the_active_session(self):
+        """The session you are in is still being written — it can never be
+        'mined' while active, so counting it makes the /compact gate
+        unsatisfiable. --session drops it from the behind-check."""
+        self.init()
+        self.make_trace()
+        self.make_session("live")
+        _, out, _ = self.roeh("status", "--json", "--session", "live")
+        s = json.loads(out)
+        self.assertEqual(s["unmined_sessions"], [])
+        self.assertFalse(s["behind"], "active session must not count as behind")
+
+    def test_excludes_only_the_active_session(self):
+        self.init()
+        self.make_trace()
+        self.make_session("live")
+        self.make_session("earlier")
+        _, out, _ = self.roeh("status", "--json", "--session", "live")
+        s = json.loads(out)
+        self.assertEqual([x["id"] for x in s["unmined_sessions"]], ["earlier"])
+        self.assertTrue(s["behind"])
+
+    def test_env_var_supplies_the_active_session(self):
+        self.init()
+        self.make_trace()
+        self.make_session("live")
+        _, out, _ = self.roeh("status", "--json",
+                              env={"CLAUDE_SESSION_ID": "live"})
+        self.assertFalse(json.loads(out)["behind"])
 
 
 class TestAppend(RoehCase):
@@ -705,14 +756,18 @@ class TestPreCompactHook(RoehCase):
 
     def test_auto_never_blocks(self):
         """Auto-compact fires when the window is already full; blocking there
-        can wedge the session with nowhere to go."""
+        can wedge the session with nowhere to go. The reminder that must survive
+        compaction is delivered by SessionStart(compact), not from here —
+        PreCompact cannot inject context, so this emits a user-facing line only."""
         self.init()
         self.make_trace()
         self.commit()
         code, out, _ = self.hook(PRECOMPACT, {"trigger": "auto"})
         self.assertEqual(code, 0)
-        ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("PRE-COMPACTION", ctx)
+        d = json.loads(out)
+        self.assertIn("behind", d["systemMessage"])
+        self.assertNotIn("hookSpecificOutput", d,
+                         "PreCompact rejects hookSpecificOutput at runtime")
 
     def test_skip_env_bypasses_the_block(self):
         self.init()
@@ -753,8 +808,10 @@ class TestPreCompactHook(RoehCase):
                                     "record": False})
         code, out, _ = self.hook(PRECOMPACT, {"trigger": "manual"})
         self.assertEqual(code, 0, "read-only must never block")
-        ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("READ-ONLY", ctx)
+        d = json.loads(out)
+        self.assertIn("read-only", d["systemMessage"].lower())
+        self.assertNotIn("hookSpecificOutput", d,
+                         "PreCompact rejects hookSpecificOutput at runtime")
         self.assertEqual(self.roeh("pending")[0], 1,
                          "sentinel was written despite record:false")
 
@@ -777,6 +834,54 @@ class TestPreCompactHook(RoehCase):
         code, out, _ = self.roeh("pending")
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out)["trigger"], "manual")
+
+    def test_active_session_alone_does_not_block(self):
+        """The gate must not wedge /compact on the session doing the compacting.
+        Its growing transcript is always unmined against itself, so without the
+        exclusion this manual compaction could never be satisfied."""
+        self.init()
+        self.make_trace()
+        self.make_session("live")
+        # Without the session id it looks behind and blocks — the old bug.
+        code, _, _ = self.hook(PRECOMPACT, {"trigger": "manual"})
+        self.assertEqual(code, 2, "sanity: an unmined session does block")
+        # With it, the active session is excluded and the gate clears.
+        code, out, _ = self.hook(PRECOMPACT,
+                                 {"trigger": "manual", "session_id": "live"})
+        self.assertEqual(code, 0, "gate wedged on the active session")
+        self.assertIn("current", json.loads(out)["systemMessage"])
+
+    def test_a_different_unmined_session_still_blocks(self):
+        """Exclusion is scoped to the active session only — a genuinely unmined
+        earlier session must still block a manual compaction."""
+        self.init()
+        self.make_trace()
+        self.make_session("live")
+        self.make_session("earlier")
+        code, _, err = self.hook(PRECOMPACT,
+                                 {"trigger": "manual", "session_id": "live"})
+        self.assertEqual(code, 2)
+        self.assertIn("COMPACTION BLOCKED", err)
+
+    def test_never_emits_the_precompact_specific_output(self):
+        """PreCompact does not support hookSpecificOutput — Claude Code rejects
+        that shape at runtime, so the nag an earlier version put there was
+        silently dropped. The JSON-parse in the other tests accepts any shape;
+        this guards the actual contract across every non-blocking path."""
+        self.init()
+        self.make_trace()
+        self.commit()
+        for trigger, pc in [
+                ("auto", {"block_manual": True, "nag_auto": True, "record": True}),
+                ("manual", {"block_manual": False, "nag_auto": True, "record": True}),
+                ("manual", {"block_manual": True, "nag_auto": True, "record": False}),
+        ]:
+            self.set_config(precompact=pc)
+            _, out, _ = self.hook(PRECOMPACT, {"trigger": trigger})
+            body = out.strip()
+            if body:
+                self.assertNotIn("hookSpecificOutput", json.loads(body),
+                                 f"{trigger}/{pc} emitted an unsupported field")
 
 
 class TestSessionStartHook(RoehCase):

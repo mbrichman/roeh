@@ -221,7 +221,7 @@ def sessions_for(cfg):
     return sorted(out, key=lambda s: s["mtime"], reverse=True)
 
 
-def status(cfg):
+def status(cfg, active_session=None):
     st = load_state(cfg)
     exists = os.path.exists(cfg["trace_abs"])
     trace_mtime = os.path.getmtime(cfg["trace_abs"]) if exists else 0
@@ -252,9 +252,19 @@ def status(cfg):
             commits.append({"sha": parts[0], "author": parts[2],
                             "subject": parts[3]})
 
+    # The currently-active session is excluded from the unmined set. It is an
+    # in-progress transcript: it grows every turn, so `roeh mark`ing it never
+    # sticks (the next turn's bytes make it unmined again). Counting it made the
+    # manual /compact gate UNSATISFIABLE — you cannot record a session before
+    # compacting it, because it is still being written. Its rationale is not at
+    # risk: the .jsonl persists across compaction and is mined by the NEXT
+    # session, where it is no longer active. Found dogfooding roeh's own gate,
+    # which wedged /compact on the very session doing the compacting.
     mined = st.get("mined_sessions", {})
     unmined = [s for s in sessions_for(cfg)
-               if s["id"] not in mined or mined[s["id"]].get("mtime", 0) < s["mtime"]]
+               if s["id"] != active_session
+               and (s["id"] not in mined
+                    or mined[s["id"]].get("mtime", 0) < s["mtime"])]
 
     # A memory directory is optional — plenty of projects have none.
     mem_dir = os.path.join(os.path.expanduser("~/.claude/projects"),
@@ -398,9 +408,22 @@ def cmd_config(args):
     print(json.dumps(out, indent=2, sort_keys=True))
 
 
+def opt_value(args, name, default=None):
+    """Read `--name VALUE` (two tokens) from an argv list."""
+    if name in args:
+        i = args.index(name)
+        if i + 1 < len(args):
+            return args[i + 1]
+    return default
+
+
 def cmd_status(args):
     cfg = load_config()
-    s = status(cfg)
+    # The active session is passed by the hooks (which read it from the event
+    # JSON) so `status` can exclude it — see status(). CLAUDE_SESSION_ID is a
+    # fallback for a bare `roeh status` run inside a live session.
+    active = opt_value(args, "--session") or os.environ.get("CLAUDE_SESSION_ID")
+    s = status(cfg, active_session=active)
     if "--json" in args:
         print(json.dumps(s, indent=2, sort_keys=True))
         return

@@ -44,11 +44,17 @@ def main():
     trigger = event.get("trigger", "auto")
     cwd = event.get("cwd") or os.getcwd()
 
+    # Exclude THIS session from the behind-check. Its transcript is still being
+    # written, so it is always "unmined" against itself — counting it made this
+    # gate unsatisfiable, wedging the very /compact that fired the hook.
+    active = event.get("session_id")
+    status_cmd = [sys.executable, os.path.join(HERE, "roeh"), "status", "--json"]
+    if active:
+        status_cmd += ["--session", active]
+
     try:
-        raw = subprocess.run([sys.executable, os.path.join(HERE, "roeh"),
-                              "status", "--json"],
-                             cwd=cwd, capture_output=True, text=True,
-                             timeout=20).stdout
+        raw = subprocess.run(status_cmd, cwd=cwd, capture_output=True,
+                             text=True, timeout=20).stdout
         st = json.loads(raw)
     except Exception:
         out({})  # No config, no trace, no git — stay silent rather than noisy.
@@ -80,24 +86,17 @@ def main():
                      + ", ".join(memory[:8]))
     evidence = "\n".join(lines)
 
-    context = (
-        "⚠️ PRE-COMPACTION — THE DECISION TRACE IS BEHIND THE WORK.\n\n"
-        f"Compaction is about to discard the reasoning behind this work. The "
-        f"trace ({st['trace']}) is what survives it.\n\n"
-        f"{evidence}\n\n"
-        "BEFORE continuing: dispatch the `scribe` agent to draft entries, then "
-        "append them with `roeh append` (append-only; it cannot rewrite). An "
-        "entry is owed on a merge, a WITHDRAWAL (higher value than a merge), a "
-        "structural review finding, a measurement that changes the next move, "
-        "or a call the owner made in conversation.\n\n"
-        "Each entry carries five things: the decision in one line; the WHY; "
-        "WHAT WAS REJECTED AND WHY (the part re-derivation always loses); "
-        "citations (SHA and/or file:line); and what it gates. Append only — a "
-        "superseded entry gets a new [REVERSAL] beside it, never an edit.\n\n"
-        "If an item is trivial (typo, formatting, a test-only follow-up already "
-        "covered), say so and skip it. Not everything is a decision — but "
-        "silence should be a judgement, not an oversight."
-    )
+    # NOTE: this hook injects nothing into the model's context. PreCompact does
+    # NOT support `hookSpecificOutput.additionalContext` — Claude Code rejects
+    # that shape ("Hook JSON output validation failed"), and an earlier version
+    # of this file emitted it, so the nag it was trying to deliver was silently
+    # dropped on every compaction. The context that must survive a compaction is
+    # delivered by the SessionStart hook (trigger=compact), which re-injects §5
+    # RESUME STATE and the "behind → /roeh:refresh" prompt into the fresh
+    # post-compaction context — the one supported channel. So the two jobs split
+    # cleanly: this hook BLOCKS a manual /compact (exit 2 + stderr) and drops the
+    # scribe sentinel; SessionStart carries the reminder across. `systemMessage`
+    # (a user-facing line, valid for any hook) is all we emit here.
 
     pc = st.get("precompact") or {}
 
@@ -112,19 +111,14 @@ def main():
     # read-only posture: a project with a hand-curated record gets the reminder
     # and the draft, and keeps a human as the only writer.
     if not pc.get("record", True):
+        # No sentinel is dropped, so the scribe (dispatched by hooks.json) finds
+        # nothing pending and stays in DRAFT mode — it returns entries instead of
+        # appending them, keeping a human the only writer. Read-only never blocks.
         out({
             "systemMessage": (
                 f"⚠️  trace is behind: {len(commits)} commit(s) — read-only "
-                "mode, nothing will be written automatically"),
-            "hookSpecificOutput": {
-                "hookEventName": "PreCompact",
-                "additionalContext": context + (
-                    "\n\nREAD-ONLY: this project sets `precompact.record: false`. "
-                    "Do NOT append to the trace automatically. If you dispatch "
-                    "the scribe, it will return DRAFT entries — surface them to "
-                    "the owner and let them decide what lands. `roeh append` "
-                    "remains available for anything they approve."),
-            },
+                "mode (precompact.record: false). The scribe will DRAFT entries "
+                "for the owner to approve; nothing is appended automatically."),
         })
 
     try:
@@ -158,12 +152,13 @@ def main():
             file=sys.stderr)
         sys.exit(2)
 
+    # Non-blocking (auto-compact, or manual with block_manual:false). The
+    # sentinel is dropped and the scribe will record; SessionStart(compact)
+    # re-injects the reminder afterward. A user-facing line is all this emits.
     out({
         "systemMessage": (
             f"⚠️  trace is behind: {len(commits)} commit(s), "
             f"{len(sessions)} unmined session(s) — recording before compaction"),
-        "hookSpecificOutput": {"hookEventName": "PreCompact",
-                               "additionalContext": context},
     })
 
 

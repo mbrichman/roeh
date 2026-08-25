@@ -75,11 +75,17 @@ def main():
     trigger = event.get("trigger", "startup")
     cwd = event.get("cwd") or os.getcwd()
 
+    # Exclude the active session from the behind-check: an in-progress transcript
+    # is not "behind", and warning about the session you are in on every startup
+    # is noise. It becomes minable next session, where it is no longer active.
+    active = event.get("session_id")
+    status_cmd = [sys.executable, os.path.join(HERE, "roeh"), "status", "--json"]
+    if active:
+        status_cmd += ["--session", active]
+
     try:
-        raw = subprocess.run([sys.executable, os.path.join(HERE, "roeh"),
-                              "status", "--json"],
-                             cwd=cwd, capture_output=True, text=True,
-                             timeout=20).stdout
+        raw = subprocess.run(status_cmd, cwd=cwd, capture_output=True,
+                             text=True, timeout=20).stdout
         st = json.loads(raw)
     except Exception:
         out({})
