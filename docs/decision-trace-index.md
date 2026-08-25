@@ -7,7 +7,7 @@ of what the record contains. Then `roeh read <§N|YYYY-MM-DD>` to pull the
 chapters you actually need. Grepping the trace directly without reading
 this first is how you confidently miss the entry that overturns your answer.
 
-Trace: 686 lines · 10 chapters · 73 tagged entries
+Trace: 710 lines · 10 chapters · 75 tagged entries
 
 ## Sections
 
@@ -25,7 +25,8 @@ Trace: 686 lines · 10 chapters · 73 tagged entries
 - **§5** — lines 593–615 · `roeh read §5`
 - **§5** — lines 616–638 · `roeh read §5`
 - **§5** — lines 639–664 · `roeh read §5`
-- **§5** — lines 665–686 · `roeh read §5`
+- **§5** — lines 665–693 · `roeh read §5`
+- **§5** — lines 694–710 · `roeh read §5`
 
 ## Chapters
 
@@ -36,9 +37,9 @@ Trace: 686 lines · 10 chapters · 73 tagged entries
 - **2026-08-17 — retrieval layer & read-only mode (recorded 2026-08-24, out of chronological order)** — lines 455–472 · 14 entries · `roeh read "2026-08-17"`
 - **2026-08-18 — Python floor & first-contact messaging (recorded 2026-08-24, out of chronological order)** — lines 473–482 · 3 entries · `roeh read "2026-08-18"`
 - **2026-08-24 — second refresh** — lines 483–494 · 6 entries · `roeh read "2026-08-24"`
-- **2026-08-25 — the v3 read path, built consumer-first** — lines 543–560 · 15 entries · `roeh read "2026-08-25"`
-- **2026-08-25 — the scribe/refresh architecture: one author, two passes** — lines 577–592 · 15 entries · `roeh read "2026-08-25"`
-- **2026-08-25 — the v3 write-path spec, and validating by clean re-derivation** — lines 657–664 · 15 entries · `roeh read "2026-08-25"`
+- **2026-08-25 — the v3 read path, built consumer-first** — lines 543–560 · 17 entries · `roeh read "2026-08-25"`
+- **2026-08-25 — the scribe/refresh architecture: one author, two passes** — lines 577–592 · 17 entries · `roeh read "2026-08-25"`
+- **2026-08-25 — the v3 write-path spec, and validating by clean re-derivation** — lines 657–664 · 17 entries · `roeh read "2026-08-25"`
 
 ## Supersessions and dead-ends — check these before quoting anything
 
@@ -126,3 +127,5 @@ Trace: 686 lines · 10 chapters · 73 tagged entries
 - `DECISION` L636 (2026-08-25) — The scribe's strict "assistant/system prose is NEVER a source" rule is KEPT AS-IS; a refinement to admit prove
 - `DECISION` L660 (2026-08-25) — v3 is validated by clean RE-DERIVATION on a real project — roeh itself first, then upstream — NOT by feeding t
 - `DECISION` L662 (2026-08-25) — The write-path producer contract is SPECIFIED and committed (`docs/design/impl-write-path.md` v2 @ `0a85a60`),
+- `DECISION` L689 (2026-08-25) — The v3 write path — build steps 1-2 of `docs/design/impl-write-path.md` §7 — is BUILT and committed (`04d542d`
+- `GOTCHA` L691 (2026-08-25) — A machine-comment INJECTION vector in the hybrid format: untrusted prose could forge an entry's machine identi
