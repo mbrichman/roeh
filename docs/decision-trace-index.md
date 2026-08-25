@@ -7,7 +7,7 @@ of what the record contains. Then `roeh read <§N|YYYY-MM-DD>` to pull the
 chapters you actually need. Grepping the trace directly without reading
 this first is how you confidently miss the entry that overturns your answer.
 
-Trace: 453 lines · 4 chapters · 42 tagged entries
+Trace: 631 lines · 9 chapters · 69 tagged entries
 
 ## Sections
 
@@ -17,14 +17,25 @@ Trace: 453 lines · 4 chapters · 42 tagged entries
 - **§3** — lines 85–220 · `roeh read §3`
 - **§4** — lines 221–244 · `roeh read §4`
 - **§5** — lines 245–336 · `roeh read §5`
-- **§5** — lines 337–453 · `roeh read §5`
+- **§5** — lines 337–494 · `roeh read §5`
+- **§5** — lines 495–512 · `roeh read §5`
+- **§5** — lines 513–528 · `roeh read §5`
+- **§5** — lines 529–560 · `roeh read §5`
+- **§5** — lines 561–592 · `roeh read §5`
+- **§5** — lines 593–615 · `roeh read §5`
+- **§5** — lines 616–631 · `roeh read §5`
 
 ## Chapters
 
 - **Contradictions & staleness ledger** — lines 75–84 · 0 entries · `roeh read "Contradictions & staleness ledger"`
 - **2026-08-16 — roeh built, from a working single-project system** — lines 87–220 · 23 entries · `roeh read "2026-08-16"`
-- **2026-08-17 — first refresh** — lines 287–336 · 7 entries · `roeh read "2026-08-17"`
-- **2026-08-09 — origin (recorded 2026-08-17, out of chronological order)** — lines 362–453 · 4 entries · `roeh read "2026-08-09"`
+- **2026-08-17 — first refresh** — lines 287–336 · 14 entries · `roeh read "2026-08-17"`
+- **2026-08-09 — origin (recorded 2026-08-17, out of chronological order)** — lines 362–454 · 4 entries · `roeh read "2026-08-09"`
+- **2026-08-17 — retrieval layer & read-only mode (recorded 2026-08-24, out of chronological order)** — lines 455–472 · 14 entries · `roeh read "2026-08-17"`
+- **2026-08-18 — Python floor & first-contact messaging (recorded 2026-08-24, out of chronological order)** — lines 473–482 · 3 entries · `roeh read "2026-08-18"`
+- **2026-08-24 — second refresh** — lines 483–494 · 6 entries · `roeh read "2026-08-24"`
+- **2026-08-25 — the v3 read path, built consumer-first** — lines 543–560 · 11 entries · `roeh read "2026-08-25"`
+- **2026-08-25 — the scribe/refresh architecture: one author, two passes** — lines 577–592 · 11 entries · `roeh read "2026-08-25"`
 
 ## Supersessions and dead-ends — check these before quoting anything
 
@@ -34,6 +45,8 @@ Trace: 453 lines · 4 chapters · 42 tagged entries
 - `CORRECTION` L305 (2026-08-17) — They were appended before the work was committed, so they cite skill-file sections rather than a SHA
 - `CORRECTION` L311 (2026-08-17) — It records v0.3.4
 - `CORRECTION` L408 (2026-08-09) — ` immediately above]** That entry claimed the origin sentence "survived only because the owner kept it and pas
+- `CORRECTION` L486 (2026-08-24) — `bin/roeh`'s command set now includes `index`, `read` and `chapters`.** §4's CLI line lists only `init, config · `09b0987`, `f6689e7`; verified against the dispatch table at
+- `CORRECTION` L488 (2026-08-24) — The deterministic suite is now 81 test methods** (`def test_` in `tests/test_roeh.py` at HEAD), not the record
 
 ## All entries
 
@@ -79,3 +92,30 @@ Trace: 453 lines · 4 chapters · 42 tagged entries
 - `LESSON` L401 (2026-08-09) — The origin statement survived only because the owner kept it and pasted it back.** It was not in a commit, a d
 - `CORRECTION` L408 (2026-08-09) — ` immediately above]** That entry claimed the origin sentence "survived only because the owner kept it and pas
 - `PRINCIPLE` L425 (2026-08-09) — The recursion, stated exactly.** Earlier entries describe it as "confident re-derivation," which is the sympto
+- `DECISION` L458 (2026-08-17) — `precompact.record: false` (read-only mode) withholds the sentinel rather than disabling the scribe.** WHY: th
+- `GOTCHA` L460 (2026-08-17) — `precompact.block_manual` / `nag_auto` were written into every config from v1 and never read** — the fifth dea · `9c587a7`
+- `DECISION` L462 (2026-08-17) — Give the oracle index/read/chapters primitives instead of an honour-system degradation instruction.** WHY: pas
+- `DECISION` L464 (2026-08-17) — `roeh chapters` / `roeh read` return CHAPTERS, never lines.** WHY: a `[REVERSAL]` almost always lives in a *la · `09b0987`
+- `DECISION` L466 (2026-08-17) — The threshold for "no longer one comfortable read" is ~400KB / ~1,500 lines** — the same figure the prior char · `09b0987`
+- `GOTCHA` L468 (2026-08-17) — The section regex matched two-or-three hashes, so `### 2026-08-16` was reported as section "§2026"** — produci · `09b0987`
+- `GOTCHA` L470 (2026-08-17) — The entry parser recognised only this tool's own `- **[DECISION]**` dialect and silently under-reported by ~90
+- `DECISION` L476 (2026-08-18) — The Python floor is 3.8, enforced loudly at runtime, with the file kept parseable on old interpreters.** WHY:
+- `DECISION` L478 (2026-08-18) — `roeh status` on an unconfigured project points to `/roeh:init`, not `/roeh:ingest`.** WHY: the old message se
+- `DECISION` L480 (2026-08-18) — README: install is machine-once, enable is per-project — two numbered steps, not one code block.** WHY: `roeh`
+- `CORRECTION` L486 (2026-08-24) — `bin/roeh`'s command set now includes `index`, `read` and `chapters`.** §4's CLI line lists only `init, config · `09b0987`, `f6689e7`; verified against the dispatch table at
+- `CORRECTION` L488 (2026-08-24) — The deterministic suite is now 81 test methods** (`def test_` in `tests/test_roeh.py` at HEAD), not the record
+- `GOTCHA` L490 (2026-08-24) — Commit `9c587a7` deleted an 11-line `[GOTCHA]` from this trace, with no mention of the deletion in its commit
+- `LESSON` L492 (2026-08-24) — The append-only guarantee is structural only on the *automated* path; the file itself remains hand-editable —
+- `LESSON` L510 (2026-08-24) — Liveness is not mechanical: the overturn-vs-refine distinction is semantic, so it must be typed at WRITE time,
+- `DECISION` L526 (2026-08-24) — roeh always starts clean; it never converts a legacy trace in place.** [auto-recorded] On any project — one ar
+- `DECISION` L550 (2026-08-25) — The v3 read path is built CONSUMER-FIRST — the read/consumer side before the write side — as a standalone, std
+- `DECISION` L552 (2026-08-25) — Entry on-disk format is HYBRID: supersession relations and cites stay VISIBLE in prose; the machine fields (`i · `) — roeh's visible-pr
+- `LESSON` L554 (2026-08-25) — Fence handling in the trace parser regressed three times, each fix a fresh heuristic; the durable fix was stru
+- `LESSON` L556 (2026-08-25) — Dogfooding the read path on roeh's OWN pre-v3 trace confirmed completeness and loud-on-legacy behaviour — and
+- `GOTCHA` L558 (2026-08-25) — "A guard that is never exercised is not a guard" bit the NEW code too: the Bloom saturation-subdivision was im
+- `DECISION` L574 (2026-08-25) — The read-side control-plane concept is named "map" (`roeh map`, `bin/roeh_map.py`), not "project."** [auto-rec
+- `DECISION` L586 (2026-08-25) — Scribe and refresh are not two kinds of thing: ONE author, TWO passes, selected by TRIGGERS.** [auto-recorded
+- `DECISION` L588 (2026-08-25) — The gate runs CAPTURE only; RECONCILE is deliberate, never automatic at compaction.** [auto-recorded 2026-08-2
+- `GOTCHA` L590 (2026-08-25) — `refresh` has been appending DIRECTLY to the trace, against the sole-author rule just ratified (Entry A above)
+- `GOTCHA` L611 (2026-08-25) — `bin/roeh-precompact` had silently emitted `hookSpecificOutput.additionalContext` — a shape `PreCompact` does
+- `DECISION` L613 (2026-08-25) — `roeh status` now EXCLUDES the currently-active session from the unmined/behind check (`status(active_session=
