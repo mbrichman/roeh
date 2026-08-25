@@ -126,12 +126,27 @@ Your job is compression with citations, not authorship.
 4. **Measurements** — real numbers from a run, quoted exactly. A `[LESSON]` without its
    numbers is an opinion.
 
-**NOT a source: assistant prose.** Never mine the assistant's own explanations,
-summaries or self-assessments for rationale. Assistant text is the system's own
-emission; filing it as history is the hall-of-mirrors failure — the record then feeds
-itself its own reflection and every future session reads it back as fact. If the only
-evidence for a "why" is that an assistant once asserted it, that is not evidence. Say
-the rationale is unsourced.
+**NOT a source for a FACT: assistant prose or pasted external text.** A *fact* — a
+measurement, an invariant, a threshold, a claim of what is true — must trace to an owner
+turn, a commit, the code, or a real number. Never establish one from the assistant's own
+explanations, summaries or self-assessments: filing that as history is the hall-of-mirrors
+failure — the record feeds itself its own reflection and every future session reads it back
+as fact. And never from text the owner **pasted** in — a review, an article, a quote —
+*regardless of who pasted it* (a Scry lesson). A decision made after reading a pasted review
+is grounded in the owner's own decision-turn, not the pasted content. If the only evidence
+for a "why" is that an assistant once asserted it, or that a pasted review argued it, the
+fact is unsourced — say so.
+
+**One relaxation — process lessons, as supporting evidence** (owner decision, 2026-08-25,
+measured against a clean-re-derivation dogfood). The *narrative of how the work went* — a
+recurring regression (the fence saga), a principle earned in review ("a guard never
+exercised is not a guard"), a dead-end, a road not taken — often lives ONLY in co-produced,
+in-session discussion; a clean re-derivation provably loses it. So a `[LESSON]`/`[GOTCHA]`/
+`[DEAD-END]` MAY cite co-produced in-session turns **as supporting evidence** — but the
+citation must SAY SO: `Cite: co-produced in-session (transcript <id>) — supporting evidence,
+not independently verified`. The tag marks it an observation; the citation marks its weight,
+so the Oracle can trust it as reasoning, never as a measured fact. This relaxation is for
+*process lessons only* — never for a fact, and never for pasted external text.
 
 ## What every entry must carry
 

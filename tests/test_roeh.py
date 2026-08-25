@@ -650,6 +650,31 @@ class TestRecord(RoehCase):
         e = [x for x in self.entries() if x.id == out.strip()][0]
         self.assertEqual(e.topic_hint, ["read path", "write side"])
 
+    def test_id_matches_what_record_assigns(self):
+        self.init()
+        self.make_trace()
+        obj = {"tag": "DECISION", "lead": "reference me", "date": "2026-08-25"}
+        _, precomputed, _ = self.roeh("id", stdin=json.dumps(obj))
+        _, recorded, _ = self.roeh("record", stdin=json.dumps(obj))
+        self.assertEqual(len(precomputed.strip()), 16)
+        self.assertEqual(precomputed.strip(), recorded.strip(),
+                         "roeh id must equal the id roeh record assigns, or edge references break")
+
+    def test_id_enables_a_forward_edge_reference(self):
+        """The point of `roeh id`: a producer computes a target's id and puts it in an edge before the
+        target is recorded; then target, then referencer are recorded and the edge resolves."""
+        self.init()
+        self.make_trace()
+        target = {"tag": "DECISION", "lead": "the old way", "date": "2026-08-25"}
+        _, tid, _ = self.roeh("id", stdin=json.dumps(target))
+        tid = tid.strip()
+        self.record(**target)
+        code, _, err = self.record(tag="REVERSAL", lead="the new way",
+                                   supersedes=[tid], date="2026-08-25")
+        self.assertEqual(code, 0, err)
+        status, _ = self.roeh_map().compute_liveness(self.entries())
+        self.assertEqual(status[tid], "dead")
+
 
 class TestPending(RoehCase):
     """The PreCompact -> scribe handshake. Hook handlers inside one event have

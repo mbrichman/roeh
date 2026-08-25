@@ -14,6 +14,8 @@ Subcommands:
   append    APPEND raw text to the trace — the low-level write primitive
   record    APPEND one structured v3 entry (JSON on stdin): assigns a content
             id, validates edges, chains and fsyncs under an exclusive lock
+  id        compute an entry's content-id (JSON on stdin) WITHOUT writing —
+            for referencing an edge target before it is recorded
   sessions  list this project's Claude Code transcripts, mined or not
   slug      compute the Claude Code project-directory slug for a path
   mark      record that a session/commit has been folded into the trace
@@ -536,6 +538,22 @@ def _idlist(v):
     return out
 
 
+def _content_id(date_str, tag, lead):
+    """The entry's 64-bit content id (impl-write-path §3.1): sha256(NFC(date) · tag · NFC(lead))[:16],
+    canonicalised (NFC + collapsed whitespace) so two implementations agree. Deterministic and
+    decentralised — a producer can compute a TARGET's id (via `roeh id`) to reference it in a
+    Supersedes:/Augments: edge without capturing the target's `record` output; the target must still be
+    recorded before the edge resolves (record refuses a dangling target). Immutable once written."""
+    import hashlib
+    import unicodedata
+
+    def canon(s):
+        return unicodedata.normalize("NFC", re.sub(r"\s+", " ", s.strip()))
+
+    payload = "\x00".join([canon(date_str), tag.upper(), canon(lead)])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def _format_record(tag, lead, req, edges, cites, eid, atomic, d, hints, chain):
     """The hybrid entry the reader parses: `[TAG] lead.` + WHY/REJECTED/GATES, visible relation
     lines, and a trailing `<!-- roeh … -->` bookkeeping comment. Continuation lines are indented so
@@ -568,8 +586,6 @@ def cmd_record(args):
     rather than hand-authored and hoped for; until then the producers still use `append` and a v3
     trace is created by a clean re-ingest, not by converting the legacy one (clean-start-always).
     The reader defines the schema; this refuses what the reader would merely tolerate."""
-    import hashlib
-    import unicodedata
     import fcntl
     from datetime import date as _date
 
@@ -629,15 +645,6 @@ def cmd_record(args):
         # forge a meta key (review P0-1/#5). Edges/cites live in visible field lines, so `,` suffices there.
         _reject_unsafe(h, f"topic-hint {h!r}", extra=(",", "="))
 
-    def canon(s):
-        return unicodedata.normalize("NFC", re.sub(r"\s+", " ", s.strip()))
-
-    # id = 64-bit content hash; immutable once written. A collision is treated as a duplicate and
-    # refused (below) — at 64 bits a different-content collision is ~2^-64, so no salt path is needed.
-    def make_id():
-        payload = "\x00".join([canon(d), tag, canon(lead)])
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
-
     # The whole read→validate→chain→append is done under an exclusive lock so two concurrent
     # writers cannot both chain off the same tail (the second's chain would silently lie). append
     # is O_APPEND (bytes don't interleave), but the CHAIN needs the read+write to be atomic as a unit.
@@ -658,7 +665,9 @@ def cmd_record(args):
                 die(f"{tag} needs a typed Supersedes:/Augments: edge — "
                     "an overturn with no edge reads as prose-only (⇒ UNCERTAIN)")
 
-            eid = make_id()
+            # id = 64-bit content hash (immutable once written). A collision is treated as a duplicate
+            # and refused below — at 64 bits a different-content collision is ~2^-64, so no salt path.
+            eid = _content_id(d, tag, lead)
             # Collision → duplicate → refuse. Scan the RAW text, not `by_id`: a pre-existing duplicate
             # id is disambiguated by the reader to `id~dupL#`, so it would not appear in `by_id` in its
             # bare form and the collision would slip through (review P2-5).
@@ -715,6 +724,32 @@ def cmd_record(args):
         finally:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     print(eid)
+
+
+def cmd_id(args):
+    """Compute the content-id for an entry WITHOUT writing it — so a producer can pre-compute a
+    TARGET's id to put in a Supersedes:/Augments: edge. NOTE: `record` still requires the target to
+    already be in the trace (it refuses a dangling edge), so record the target BEFORE its superseder —
+    natural in a chronological ingest. `roeh id` just names the id without capturing `record`'s stdout.
+    Reads JSON {tag, lead, date?} on stdin (date defaults to today); prints the 16-hex id — the exact
+    id `record` will assign, so a pre-computed reference resolves once the target is recorded."""
+    from datetime import date as _date
+    try:
+        req = json.load(sys.stdin)
+    except Exception as e:
+        die(f"roeh id reads one JSON object {{tag, lead, date?}} on stdin ({e})")
+    if not isinstance(req, dict):
+        die("roeh id reads one JSON OBJECT on stdin")
+    tag = (req.get("tag") or "").strip().upper()
+    lead = (req.get("lead") or "").strip()
+    if not re.match(r"^[A-Z][A-Z0-9-]{1,18}$", tag):
+        die(f"bad tag {tag!r} — must match [A-Z][A-Z0-9-]{{1,18}}")
+    if not lead:
+        die("lead is required — the one atomic claim")
+    d = (req.get("date") or _date.today().isoformat()).strip()
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", d):
+        die(f"date {d!r} must be YYYY-MM-DD")
+    print(_content_id(d, tag, lead))
 
 
 def cmd_sessions(args):
@@ -1325,8 +1360,8 @@ def cmd_pending(args):
 
 
 COMMANDS = {"init": cmd_init, "config": cmd_config, "status": cmd_status,
-            "append": cmd_append, "record": cmd_record, "sessions": cmd_sessions,
-            "mark": cmd_mark, "slug": cmd_slug, "pending": cmd_pending,
+            "append": cmd_append, "record": cmd_record, "id": cmd_id,
+            "sessions": cmd_sessions, "mark": cmd_mark, "slug": cmd_slug, "pending": cmd_pending,
             "doctor": cmd_doctor, "ingest": cmd_ingest, "index": cmd_index,
             "read": cmd_read, "chapters": cmd_chapters}
 
