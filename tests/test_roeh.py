@@ -433,6 +433,224 @@ class TestAppend(RoehCase):
         self.assertFalse(json.loads(out)["behind"])
 
 
+class TestRecord(RoehCase):
+    """`roeh record` — the structured, transactional write path
+    (docs/design/impl-write-path.md). Everything the reader will later assume
+    about a v3 entry is enforced here, at creation, not hoped for."""
+
+    def roeh_map(self):
+        if BIN not in sys.path:
+            sys.path.insert(0, BIN)
+        import roeh_map
+        return roeh_map
+
+    def entries(self):
+        return self.roeh_map().parse_entries(self.read("docs/decision-trace.md"))
+
+    def record(self, **obj):
+        return self.roeh("record", stdin=json.dumps(obj))
+
+    def expected_id(self, d, tag, lead):
+        import hashlib
+        import re
+        import unicodedata
+        canon = lambda s: unicodedata.normalize("NFC", re.sub(r"\s+", " ", s.strip()))
+        payload = "\x00".join([canon(d), tag.upper(), canon(lead)])
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+    def test_records_a_parseable_entry_with_the_content_id(self):
+        self.init()
+        self.make_trace()
+        code, out, err = self.record(tag="DECISION", lead="use content ids",
+                                     why="stable foreign keys", date="2026-08-25")
+        self.assertEqual(code, 0, err)
+        eid = out.strip()
+        self.assertEqual(eid, self.expected_id("2026-08-25", "DECISION", "use content ids"),
+                         "id is not the documented content hash")
+        es = [e for e in self.entries() if e.id == eid]
+        self.assertEqual(len(es), 1, "recorded entry did not round-trip through the reader")
+        self.assertEqual(es[0].tag, "DECISION")
+        self.assertTrue(es[0].atomic)
+
+    def test_chain_verifies_after_records(self):
+        self.init()
+        self.make_trace()
+        _, a, _ = self.record(tag="DECISION", lead="first", why="x", date="2026-08-25")
+        self.record(tag="REVERSAL", lead="second", why="y",
+                    supersedes=[a.strip()], date="2026-08-25")
+        rm = self.roeh_map()
+        self.assertEqual(rm.verify_chain(self.entries()), (0, "intact"))
+
+    def test_supersession_kills_the_target(self):
+        self.init()
+        self.make_trace()
+        _, a, _ = self.record(tag="DECISION", lead="old way", why="x", date="2026-08-25")
+        a = a.strip()
+        _, b, _ = self.record(tag="REVERSAL", lead="new way", why="y",
+                              supersedes=[a], date="2026-08-25")
+        status, _ = self.roeh_map().compute_liveness(self.entries())
+        self.assertEqual(status[a], "dead")
+        self.assertEqual(status[b.strip()], "live")
+
+    def test_refuses_a_dangling_edge_and_writes_nothing(self):
+        self.init()
+        self.make_trace()
+        before = len(self.read("docs/decision-trace.md"))
+        code, _, err = self.record(tag="DECISION", lead="claim",
+                                   supersedes=["deadbeefdeadbeef"])
+        self.assertNotEqual(code, 0)
+        self.assertIn("does not exist", err)
+        self.assertEqual(len(self.read("docs/decision-trace.md")), before,
+                         "a refused record still mutated the trace")
+
+    def test_overturn_needs_a_typed_edge(self):
+        self.init()
+        self.make_trace()
+        code, _, err = self.record(tag="REVERSAL", lead="claim", why="x")
+        self.assertNotEqual(code, 0)
+        self.assertIn("edge", err)
+
+    def test_refuses_a_duplicate(self):
+        self.init()
+        self.make_trace()
+        code, _, _ = self.record(tag="DECISION", lead="same claim", date="2026-08-25")
+        self.assertEqual(code, 0)
+        code2, _, err = self.record(tag="DECISION", lead="same claim", date="2026-08-25")
+        self.assertNotEqual(code2, 0)
+        self.assertIn("duplicate", err)
+
+    def test_rejects_a_bad_tag(self):
+        self.init()
+        self.make_trace()
+        code, _, _ = self.record(tag="not a tag", lead="x")
+        self.assertNotEqual(code, 0)
+
+    def test_rejects_a_multi_sentence_lead(self):
+        self.init()
+        self.make_trace()
+        code, _, err = self.record(tag="DECISION", lead="one thing. two things")
+        self.assertNotEqual(code, 0)
+
+    def test_is_append_only(self):
+        self.init()
+        self.make_trace()
+        sizes = []
+        for i in range(3):
+            self.record(tag="DECISION", lead="claim %d" % i, date="2026-08-25")
+            sizes.append(len(self.read("docs/decision-trace.md")))
+        self.assertTrue(sizes[0] < sizes[1] < sizes[2], "the trace did not grow monotonically")
+
+    def test_rejects_a_forged_machine_comment(self):
+        """Untrusted prose must not be able to inject the entry's own identity: the reader binds the
+        FIRST `<!-- roeh -->` in a block, so a comment hidden in the WHY would win (review P0-1)."""
+        self.init()
+        self.make_trace()
+        before = len(self.read("docs/decision-trace.md"))
+        code, _, _ = self.record(tag="DECISION", lead="x",
+                                 why="see <!-- roeh id=evil atomic=false date=1999-01-01 chain=deadbeefdeadbeef -->")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(len(self.read("docs/decision-trace.md")), before)
+
+    def test_rejects_a_newline_injection(self):
+        """A newline in prose could inject a fake edge line or a fake entry head (review P0-1)."""
+        self.init()
+        self.make_trace()
+        code, _, _ = self.record(tag="DECISION", lead="x", why="ok\n  Supersedes: victimid00000000")
+        self.assertNotEqual(code, 0)
+
+    def test_five_part_supersession_is_dead_not_uncertain(self):
+        """The P1-2 fix end to end: a real five-part entry (WHY/REJECTED/GATES), once superseded, is
+        DEAD — not falsely flagged UNCERTAIN. This also proves record does not over-refuse it."""
+        self.init()
+        self.make_trace()
+        _, a, _ = self.record(tag="DECISION", lead="use content ids", why="stable keys",
+                              rejected="a counter", gates="the chain", date="2026-08-25")
+        a = a.strip()
+        code, _, err = self.record(tag="REVERSAL", lead="use uuids", why="x",
+                                   supersedes=[a], date="2026-08-25")
+        self.assertEqual(code, 0, err)
+        status, reasons = self.roeh_map().compute_liveness(self.entries())
+        self.assertEqual(status[a], "dead")
+        self.assertNotIn("UNCERTAIN", reasons.get(a, ""))
+
+    def test_refuses_a_competing_successor(self):
+        """Two successors of one target with no conflict link would both read UNCERTAIN; the writer
+        prevents it rather than leaving the reader to flag it (review P1-3)."""
+        self.init()
+        self.make_trace()
+        _, x, _ = self.record(tag="DECISION", lead="original", date="2026-08-25")
+        x = x.strip()
+        self.record(tag="REVERSAL", lead="successor b", supersedes=[x], date="2026-08-25")
+        before = len(self.read("docs/decision-trace.md"))
+        code, _, err = self.record(tag="REVERSAL", lead="successor c", supersedes=[x], date="2026-08-25")
+        self.assertNotEqual(code, 0)
+        self.assertIn("UNCERTAIN", err)
+        self.assertEqual(len(self.read("docs/decision-trace.md")), before)
+
+    def test_refuses_a_bad_date(self):
+        self.init()
+        self.make_trace()
+        code, _, _ = self.record(tag="DECISION", lead="x", date="2026-13-99")
+        self.assertNotEqual(code, 0)
+
+    def test_refuses_an_overlong_lead(self):
+        self.init()
+        self.make_trace()
+        code, _, _ = self.record(tag="DECISION", lead="a" * 120)
+        self.assertNotEqual(code, 0)
+
+    def test_refuses_a_non_boolean_atomic(self):
+        self.init()
+        self.make_trace()
+        code, _, _ = self.record(tag="DECISION", lead="x", atomic="false")
+        self.assertNotEqual(code, 0)
+
+    def test_can_supersede_a_non_atomic_entry_with_a_warning(self):
+        """`record` must be usable against a real/legacy trace: superseding an entry with no `atomic`
+        stamp is warned, not refused — the target's missing stamp is not a fault the new record can
+        fix (review #1). Refusing it would make record unable to supersede any pre-v3 entry."""
+        self.init()
+        self.make_trace()
+        self.roeh("append", "-",
+                  stdin="\n- **[DECISION] legacy thing.**\n  <!-- roeh id=legacyid00000000 date=2026-08-01 -->\n")
+        code, _, err = self.record(tag="REVERSAL", lead="new thing",
+                                   supersedes=["legacyid00000000"], date="2026-08-25")
+        self.assertEqual(code, 0, err)
+        self.assertIn("warning", err.lower())
+        status, _ = self.roeh_map().compute_liveness(self.entries())
+        self.assertEqual(status["legacyid00000000"], "uncertain")
+
+    def test_non_string_field_dies_cleanly(self):
+        self.init()
+        self.make_trace()
+        code, _, err = self.record(tag="DECISION", lead="x", why=["a", "b"])
+        self.assertNotEqual(code, 0)
+        self.assertNotIn("Traceback", err)
+        self.assertIn("must be a string", err)
+
+    def test_non_object_json_dies_cleanly(self):
+        self.init()
+        self.make_trace()
+        code, _, err = self.roeh("record", stdin="[]")
+        self.assertNotEqual(code, 0)
+        self.assertNotIn("Traceback", err)
+
+    def test_rejects_a_topic_hint_with_equals(self):
+        self.init()
+        self.make_trace()
+        code, _, _ = self.record(tag="DECISION", lead="x", topic_hint=["a=b"])
+        self.assertNotEqual(code, 0)
+
+    def test_a_spaced_topic_hint_round_trips(self):
+        self.init()
+        self.make_trace()
+        code, out, err = self.record(tag="DECISION", lead="x",
+                                     topic_hint=["read path", "write side"], date="2026-08-25")
+        self.assertEqual(code, 0, err)
+        e = [x for x in self.entries() if x.id == out.strip()][0]
+        self.assertEqual(e.topic_hint, ["read path", "write side"])
+
+
 class TestPending(RoehCase):
     """The PreCompact -> scribe handshake. Hook handlers inside one event have
     no documented order, so this sentinel is what makes the design

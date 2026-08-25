@@ -118,9 +118,24 @@ COMMIT
 - **Serialization** closes the chain race: two writers reading the same tail would both chain off the
   same `prev`, and the second's `chain` would lie. The lock makes read-tail→append atomic.
 - **Record atomicity:** a successful append adds exactly one complete record; a failed/crashed one
-  adds **zero** bytes (build the full string, one `write`, then fsync). On next open, if the last
-  record does not parse, truncate the partial tail — the log must never be left unparsable. This is
-  the structural guarantee the whole system leans on, so it must survive process failure.
+  adds **zero** bytes (build the full string, one `write`, then fsync). Process-kill is covered by
+  the single-write+fsync; a next-open truncate-partial-tail recovery for **power-loss torn writes** is
+  deferred (P2 — hard to do safely on a mixed legacy/v3 trace). `roeh append` takes the **same** lock
+  and fsync, or an unlocked append between record's read-tail and its write would break record's chain.
+
+### 4.2 Input validation & injection defense (as built; two review passes)
+The entry's fields come from **untrusted JSON**, and are interpolated into the sole authoritative log.
+- **Type gate:** the body must be a JSON object; `tag`/`lead`/`why`/`rejected`/`gates`/`date` must be
+  strings — else a clean refusal, never a traceback.
+- **Sanitize:** reject `<!--`, `-->`, or a newline in any field (a newline injects a fake edge line /
+  entry head / heading; a comment forges the machine identity, because the reader binds the **first**
+  `<!-- roeh -->` in a block). `topic-hint` items additionally reject `,` and `=` (it is the one list
+  that lands *in* the comment, where ` word=` would forge a meta key). `date` is `YYYY-MM-DD` and a
+  real calendar date; `lead` ≤90 chars.
+- **Round-trip backstop:** after formatting, the entry MUST `parse_entries` back to exactly one entry
+  carrying the intended `id`/`tag`/`date`/`atomic`/`chain`/edges/**cites**/**topic-hint**, or it is
+  refused. This catches anything the blacklist missed — the writer verifies what it wrote is what the
+  reader will read.
 
 ### 3.5 / 4.1 Edge rules the writer MUST honour (pinned, `compute_liveness` L232–282)
 - Targets resolve (no dangling) and are **strictly earlier** for `supersedes`/`augments`; `conflicts`
@@ -135,6 +150,12 @@ COMMIT
   augments A and B is superseded, B's superseder MUST restate `augments A`, or A is flagged
   `augment lost` (L278–282). Edges never inherit across a supersession — every live proposition owns
   its complete set of edges.
+- **Enforcement = diff liveness across the append.** `record` computes liveness before/after and
+  **refuses** any record that introduces a new UNCERTAIN it can fix — competing successor (add a
+  conflict link), augment-lost (restate), dangling/prose-only (fix the edge). The **one exception is
+  "non-atomic entry superseded"**: that is the *target's* missing `atomic` stamp, not a fault the new
+  record can fix (it cannot retro-stamp a legacy/`append`-authored entry), so it **warns and allows** —
+  otherwise `record` could never supersede any pre-v3 entry (review #1).
 
 ## 5. Fail-loud typing (the L511 rule)
 The overturn-vs-refine call is semantic and made at write time. When the producer genuinely cannot

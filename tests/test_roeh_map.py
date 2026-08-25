@@ -499,12 +499,20 @@ class Step4ReviewFixes(unittest.TestCase):
         status2, _ = rm.compute_liveness(rm.parse_entries(kept))
         self.assertEqual(status2["A"], "live")            # restatement clears the gap
 
-    def test_6_stamped_atomic_multiclaim_flagged(self):
-        txt = ("- **[DECISION] bundle. WHY: one. WHY: two.**\n  <!-- roeh id=M class=decision atomic=true date=2026-08-01 -->\n"
-               "- **[CORRECTION] fix.**\n  Supersedes: M\n  <!-- roeh id=N class=correction atomic=true date=2026-08-02 -->\n")
-        status, reasons = rm.compute_liveness(rm.parse_entries(txt))
-        self.assertEqual(status["M"], "uncertain")
-        self.assertIn("claim clauses", reasons["M"])       # stamp not trusted blindly
+    def test_6_atomic_stamp_trusted_but_non_atomic_still_flagged(self):
+        # The old >=2-clause-marker heuristic flagged every well-formed five-part entry
+        # (WHY:+REJECTED:+GATES: = 3 markers) as UNCERTAIN when superseded — REMOVED
+        # (impl-write-path.md §3.3): a valid producer `atomic` stamp is trusted, not second-guessed by
+        # a bad proxy. The SOUND check stays: a superseded NON-atomic entry is still surfaced.
+        five = ("- **[DECISION] use content ids. WHY: keys. REJECTED: a counter. GATES: the chain.**\n"
+                "  <!-- roeh id=M atomic=true date=2026-08-01 -->\n"
+                "- **[CORRECTION] fix.**\n  Supersedes: M\n  <!-- roeh id=N atomic=true date=2026-08-02 -->\n")
+        s, r = rm.compute_liveness(rm.parse_entries(five))
+        self.assertEqual(s["M"], "dead")                   # trusted atomic stamp: superseded, not flagged
+        self.assertNotIn("claim", r.get("M", ""))
+        s2, r2 = rm.compute_liveness(rm.parse_entries(five.replace("id=M atomic=true", "id=M atomic=false")))
+        self.assertEqual(s2["M"], "uncertain")             # sound check kept
+        self.assertIn("non-atomic", r2["M"])
 
     def test_7_segment_indices_stable_across_budgets(self):
         a = rm.read(load(), "retrieval/0", budget_tokens=40)

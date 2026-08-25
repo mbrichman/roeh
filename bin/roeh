@@ -11,7 +11,9 @@ Subcommands:
   init      write .claude/roeh.json + the trace skeleton
   config    resolve and print the effective config
   status    is the record behind the work? (commits / sessions / memory)
-  append    APPEND to the trace — the only supported write path
+  append    APPEND raw text to the trace — the low-level write primitive
+  record    APPEND one structured v3 entry (JSON on stdin): assigns a content
+            id, validates edges, chains and fsyncs under an exclusive lock
   sessions  list this project's Claude Code transcripts, mined or not
   slug      compute the Claude Code project-directory slug for a path
   mark      record that a session/commit has been folded into the trace
@@ -472,17 +474,247 @@ def cmd_append(args):
     before = os.path.getsize(cfg["trace_abs"])
     # Check the final byte rather than reading the file: the trace is the one
     # artifact guaranteed to grow without bound, and this runs on every append.
-    needs_nl = False
-    if before:
-        with open(cfg["trace_abs"], "rb") as f:
-            f.seek(-1, os.SEEK_END)
-            needs_nl = f.read(1) != b"\n"
+    # Lock + fsync like `record`: an unlocked append that lands between record's read-tail and its
+    # write would leave record's freshly-computed chain pointing at the wrong predecessor. Both write
+    # paths take the SAME advisory lock so they exclude each other (review P1-4). The trailing-newline
+    # check runs UNDER the lock too — a concurrent record between an early check and the lock could
+    # otherwise make this insert a spurious blank line (review #6).
+    import fcntl
     with open(cfg["trace_abs"], "a") as f:
-        if needs_nl:
-            f.write("\n")
-        f.write(text if text.endswith("\n") else text + "\n")
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            needs_nl = False
+            if os.fstat(f.fileno()).st_size:
+                with open(cfg["trace_abs"], "rb") as rf:
+                    rf.seek(-1, os.SEEK_END)
+                    needs_nl = rf.read(1) != b"\n"
+            if needs_nl:
+                f.write("\n")
+            f.write(text if text.endswith("\n") else text + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     after = os.path.getsize(cfg["trace_abs"])
     print(f"appended {after - before} bytes to {cfg['trace_abs']}")
+
+
+def _load_roeh_map():
+    """Import the read-path core (the parser/liveness/chain authority) from this same bin dir.
+    Lazy: only `record` (and, later, map/scope) need it, so hooks calling `status` don't pay for it."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import roeh_map
+    return roeh_map
+
+
+_UNSAFE = ("<!--", "-->", "\n", "\r")
+
+
+def _reject_unsafe(value, what, extra=()):
+    """A field value comes from untrusted JSON and is interpolated into the authoritative log. Reject
+    any sequence that could FORGE the machine comment (`<!-- -->`) or break the entry into fake
+    heads/edges/headings (a newline). The reader binds the FIRST `<!-- roeh -->` in a block, so an
+    injected comment in the prose would silently become the entry's identity (review P0-1)."""
+    for bad in _UNSAFE + tuple(extra):
+        if bad in value:
+            die("%s contains an illegal sequence %r — it would corrupt or forge the record" % (what, bad))
+
+
+def _idlist(v):
+    """A relation/cite field may arrive as a JSON list or a comma string; normalise, dedupe, order."""
+    if v is None:
+        return []
+    if isinstance(v, str):
+        v = v.split(",")
+    out = []
+    for x in v:
+        x = str(x).strip()
+        if x and x not in out:
+            out.append(x)
+    return out
+
+
+def _format_record(tag, lead, req, edges, cites, eid, atomic, d, hints, chain):
+    """The hybrid entry the reader parses: `[TAG] lead.` + WHY/REJECTED/GATES, visible relation
+    lines, and a trailing `<!-- roeh … -->` bookkeeping comment. Continuation lines are indented so
+    none can be mistaken for a new entry head or a heading."""
+    parts = []
+    for label, key in (("WHY", "why"), ("REJECTED", "rejected"), ("GATES", "gates")):
+        val = (req.get(key) or "").strip()
+        if val:
+            parts.append("%s: %s" % (label, val))
+    head = "- **[%s] %s.**" % (tag, lead) + ((" " + " ".join(parts)) if parts else "")
+    lines = [head]
+    for label, vals in (("Supersedes", edges["supersedes"]), ("Augments", edges["augments"]),
+                        ("Conflicts", edges["conflicts"]), ("Cites", cites)):
+        if vals:
+            lines.append("  %s: %s" % (label, ", ".join(vals)))
+    meta = "id=%s atomic=%s date=%s chain=%s" % (eid, "true" if atomic else "false", d, chain)
+    if hints:
+        meta += " topic-hint=" + ", ".join(hints)
+    lines.append("  <!-- roeh %s -->" % meta)
+    return "\n".join(lines) + "\n"
+
+
+def cmd_record(args):
+    """The structured, transactional write path — the producer contract (docs/design/impl-write-path.md).
+
+    Reads a JSON entry on stdin, assigns a content-derived id, validates its edges against the
+    reader, computes the tamper-evidence chain, and appends ONE complete record under an exclusive
+    lock with fsync. `append` stays the raw primitive. The clean-ingest wiring (build step 3) moves
+    the scribe and ingest onto THIS so id / chain / format / edge-validation are enforced at creation
+    rather than hand-authored and hoped for; until then the producers still use `append` and a v3
+    trace is created by a clean re-ingest, not by converting the legacy one (clean-start-always).
+    The reader defines the schema; this refuses what the reader would merely tolerate."""
+    import hashlib
+    import unicodedata
+    import fcntl
+    from datetime import date as _date
+
+    cfg = load_config()
+    trace = cfg["trace_abs"]
+    if not os.path.exists(trace):
+        die(f"no trace at {trace} — run /roeh:ingest first")
+    rm = _load_roeh_map()
+    try:
+        req = json.load(sys.stdin)
+    except Exception as e:
+        die(f"roeh record reads one JSON entry on stdin ({e})")
+    if not isinstance(req, dict):
+        die("roeh record reads one JSON OBJECT on stdin (got %s)" % type(req).__name__)
+    for k in ("tag", "lead", "why", "rejected", "gates", "date"):
+        if req.get(k) is not None and not isinstance(req[k], str):
+            die(f"{k} must be a string")
+
+    tag = (req.get("tag") or "").strip().upper()
+    lead = (req.get("lead") or "").strip()
+    if not re.match(r"^[A-Z][A-Z0-9-]{1,18}$", tag):
+        die(f"bad tag {tag!r} — must match [A-Z][A-Z0-9-]{{1,18}}")
+    if not lead:
+        die("lead is required — the one atomic claim")
+    if ". " in lead:
+        die("lead must be a single sentence (no '. ' inside): the reader splits the lead on it")
+    if len(lead) > 90:
+        die("lead must be ≤90 chars — the reader truncates the display there; keep it one claim")
+
+    # Every prose field is interpolated into the log; sanitise before it can forge/break the entry.
+    for name, val in (("lead", lead), ("why", str(req.get("why") or "")),
+                      ("rejected", str(req.get("rejected") or "")), ("gates", str(req.get("gates") or ""))):
+        _reject_unsafe(val, name)
+
+    d = (req.get("date") or _date.today().isoformat()).strip()
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", d):
+        die(f"date {d!r} must be YYYY-MM-DD")
+    try:
+        _date.fromisoformat(d)
+    except ValueError:
+        die(f"date {d!r} is not a real calendar date")
+
+    atomic = req.get("atomic", True)
+    if not isinstance(atomic, bool):
+        die("atomic must be a JSON boolean (true or false)")
+
+    edges = {k: _idlist(req.get(k)) for k in ("supersedes", "augments", "conflicts")}
+    cites = _idlist(req.get("cites"))
+    hints = _idlist(req.get("topic_hint"))
+    for name in ("supersedes", "augments", "conflicts"):
+        for t in edges[name]:
+            _reject_unsafe(t, f"{name} id {t!r}", extra=(",",))
+    for c in cites:
+        _reject_unsafe(c, f"cite {c!r}", extra=(",",))
+    for h in hints:
+        # `=` too: topic-hint is the ONE list that lands in the machine comment, where ` word=` would
+        # forge a meta key (review P0-1/#5). Edges/cites live in visible field lines, so `,` suffices there.
+        _reject_unsafe(h, f"topic-hint {h!r}", extra=(",", "="))
+
+    def canon(s):
+        return unicodedata.normalize("NFC", re.sub(r"\s+", " ", s.strip()))
+
+    # id = 64-bit content hash; immutable once written. A collision is treated as a duplicate and
+    # refused (below) — at 64 bits a different-content collision is ~2^-64, so no salt path is needed.
+    def make_id():
+        payload = "\x00".join([canon(d), tag, canon(lead)])
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+    # The whole read→validate→chain→append is done under an exclusive lock so two concurrent
+    # writers cannot both chain off the same tail (the second's chain would silently lie). append
+    # is O_APPEND (bytes don't interleave), but the CHAIN needs the read+write to be atomic as a unit.
+    with open(trace, "r+", encoding="utf-8") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            f.seek(0)
+            cur = f.read()
+            entries = rm.parse_entries(cur)
+            by_id = {e.id: e for e in entries}
+
+            # Mechanical facts → refuse (not the reader's job to tolerate what the writer can prevent).
+            for name in ("supersedes", "augments", "conflicts"):
+                for t in edges[name]:
+                    if t not in by_id:
+                        die(f"{name} target {t} does not exist in the trace")
+            if tag in ("REVERSAL", "CORRECTION") and not edges["supersedes"] and not edges["augments"]:
+                die(f"{tag} needs a typed Supersedes:/Augments: edge — "
+                    "an overturn with no edge reads as prose-only (⇒ UNCERTAIN)")
+
+            eid = make_id()
+            # Collision → duplicate → refuse. Scan the RAW text, not `by_id`: a pre-existing duplicate
+            # id is disambiguated by the reader to `id~dupL#`, so it would not appear in `by_id` in its
+            # bare form and the collision would slip through (review P2-5).
+            if re.search(r"(?<![\w-])id=" + re.escape(eid) + r"(?![0-9a-f])", cur):
+                die(f"duplicate: id {eid} is already in the trace "
+                    "(same date+tag+lead) — vary the lead if this is a genuinely different decision")
+
+            # Chain = fold chain_link through EVERY existing id (matching _expected_chains), then this
+            # id. Reading the tail's stored chain is not enough: a legacy tail has none.
+            prev = ""
+            for e in entries:
+                prev = rm.chain_link(prev, e.id)
+            chain = rm.chain_link(prev, eid)
+
+            block = _format_record(tag, lead, req, edges, cites, eid, atomic, d, hints, chain)
+            sep = "" if (not cur or cur.endswith("\n")) else "\n"
+
+            # (a) The formatted entry MUST round-trip through the reader to exactly what we intended —
+            # a belt-and-braces catch for anything that slipped past _reject_unsafe (review P0-1). If it
+            # does not parse back to ONE entry carrying our id/edges/meta, a field forged the record.
+            rt = rm.parse_entries(block)
+            if not (len(rt) == 1 and rt[0].id == eid and rt[0].tag == tag and rt[0].date == d
+                    and bool(rt[0].atomic) == atomic and rt[0].chain == chain
+                    and rt[0].supersedes == edges["supersedes"] and rt[0].augments == edges["augments"]
+                    and rt[0].conflicts == edges["conflicts"] and rt[0].cites == cites
+                    and rt[0].topic_hint == hints):
+                die("refusing: the formatted entry does not round-trip through the reader "
+                    "(a field value would corrupt or forge the record)")
+
+            # (b) The append MUST NOT introduce new UNCERTAIN — competing successors with no conflict
+            # link, a dropped augment across a supersession, etc. are the writer's to prevent, not the
+            # reader's to tolerate (review P1-3). Diff liveness across the append; refuse on any newly
+            # uncertain entry, quoting the reader's own reason.
+            before, _ = rm.compute_liveness(entries)
+            after, areason = rm.compute_liveness(rm.parse_entries(cur + sep + block))
+            refuse, warn = [], []
+            for i in after:
+                if after[i] == "uncertain" and before.get(i) != "uncertain":
+                    # "non-atomic entry superseded" is a property of the TARGET — a legacy or
+                    # append-authored entry with no atomic stamp — not a fault the new record can fix
+                    # (it cannot retro-stamp the old entry). Warn and allow, or `record` could never
+                    # supersede any pre-v3 entry (review #1). Everything else — competing successors,
+                    # a dropped augment, a dangling/prose-only edge — the writer MUST prevent.
+                    (warn if "non-atomic entry superseded" in areason[i] else refuse).append(areason[i])
+            if refuse:
+                die("refusing: this record would introduce UNCERTAIN — " + "; ".join(sorted(set(refuse))))
+            for w in sorted(set(warn)):
+                sys.stderr.write("warning: " + w + "\n")
+
+            f.seek(0, os.SEEK_END)
+            f.write(sep + block)              # one write of one complete record
+            f.flush()
+            os.fsync(f.fileno())              # durable before the lock releases
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    print(eid)
 
 
 def cmd_sessions(args):
@@ -1093,10 +1325,10 @@ def cmd_pending(args):
 
 
 COMMANDS = {"init": cmd_init, "config": cmd_config, "status": cmd_status,
-            "append": cmd_append, "sessions": cmd_sessions, "mark": cmd_mark,
-            "slug": cmd_slug, "pending": cmd_pending, "doctor": cmd_doctor,
-            "ingest": cmd_ingest, "index": cmd_index, "read": cmd_read,
-            "chapters": cmd_chapters}
+            "append": cmd_append, "record": cmd_record, "sessions": cmd_sessions,
+            "mark": cmd_mark, "slug": cmd_slug, "pending": cmd_pending,
+            "doctor": cmd_doctor, "ingest": cmd_ingest, "index": cmd_index,
+            "read": cmd_read, "chapters": cmd_chapters}
 
 
 def main():

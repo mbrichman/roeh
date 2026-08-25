@@ -251,7 +251,7 @@ def compute_liveness(entries: List[Entry]) -> Tuple[Dict[str, str], Dict[str, st
                     flag(a, "competing successor of %s (unresolved)" % t)
 
     for e in entries:
-        if e.tag in TERMINAL or e.cls in ("dead-end", "withdrawn"):
+        if e.tag in TERMINAL:   # `class` dropped (impl-write-path §2): terminal-ness is the tag's alone
             status[e.id], reasons[e.id] = "dead", "terminal"
         elif e.id in superseded_by:
             status[e.id] = "dead"
@@ -260,19 +260,14 @@ def compute_liveness(entries: List[Entry]) -> Tuple[Dict[str, str], Dict[str, st
             status[e.id] = "live"
 
     # Non-atomic entry superseded: dead, but surface it — this is where whole-entry supersession
-    # can kill a co-located live claim. Also catch a stamped-atomic entry whose TEXT bundles claims
-    # (§2.2.1 heuristic) — the stamp is not trusted blindly (review #6).
-    _CLAUSES = ("WHY:", "GATES:", "REJECTED:", "MEASURED:")
+    # can kill a co-located live claim. `atomic` is a PRODUCER assertion (impl-write-path §3.3): we
+    # keep this sound check but NOT the old ≥2-clause-marker heuristic, which flagged every
+    # well-formed five-part entry (WHY:+REJECTED:+GATES: = 3 markers) as UNCERTAIN and so eroded the
+    # signal — a guard that fires on every valid entry is noise, not a guard.
     for t in superseded_by:
         et = by_id.get(t)
-        if not et:
-            continue
-        if et.atomic is not True:
+        if et and et.atomic is not True:
             flag(t, "non-atomic entry superseded (co-located live claim may be lost)")
-        else:
-            nclauses = sum(_strip_fences(et.text).count(c) for c in _CLAUSES)  # fenced examples don't count (round-6 #2)
-            if nclauses >= 2:
-                flag(t, "stamped atomic but text shows %d claim clauses" % nclauses)
     # Augment lost across a supersession (§2.2.2): B augments A, B superseded, and no superseder of
     # B restates `augments A` — A silently loses its augmentation unless we flag it (review #5).
     for e in entries:
@@ -309,7 +304,7 @@ def _threshold(as_of: str, D: int) -> str:
 def _toplevel(cite: str) -> Optional[str]:
     if "/" in cite:
         return cite.split("/", 1)[0]
-    if re.search(r"\.[A-Za-z]{1,4}$", cite):   # case-insensitive extension (review #7)
+    if re.search(r"\.[A-Za-z0-9]{1,8}$", cite):   # extension up to 8 chars so `.jsonl`/`.parquet` count
         return cite.rsplit(".", 1)[0]
     return None  # a bare SHA needs `git show --stat` to yield a path-topic (real trace, not fixture)
 
@@ -451,7 +446,7 @@ def _assemble(text, entries, by_id, status, reasons, id_regions, region_ids, sta
     ledger_lines, ledger_ids = [], set()
     for e in entries:
         st = status.get(e.id)
-        terminal = e.tag in TERMINAL or e.cls in ("dead-end", "withdrawn")
+        terminal = e.tag in TERMINAL   # `class` dropped (impl-write-path §2)
         if st == "live" and in_expanded(e.id):
             live_ids.add(e.id)
             parts = []                                   # show ALL edges, not just the first (review #6)
@@ -890,10 +885,17 @@ def verify(model, text, budget, D, as_of, m=BLOOM_M, k=BLOOM_K, topic_map="", re
     return (0, "fresh")
 
 
+def chain_link(prev: str, eid: str) -> str:
+    """One tamper-evidence link: chain_i = H(prev ‖ NUL ‖ id_i)[:16]. The SINGLE source of the
+    chain formula — `_expected_chains` (verify) and the write path (`roeh record`, which stamps a
+    new entry's chain) both call this, so a producer and the verifier can never drift."""
+    return hashlib.sha256((prev + "\x00" + eid).encode("utf-8")).hexdigest()[:16]
+
+
 def _expected_chains(entries):
     out, prev = {}, ""
     for e in entries:
-        prev = hashlib.sha256((prev + "\x00" + e.id).encode("utf-8")).hexdigest()[:16]
+        prev = chain_link(prev, e.id)
         out[e.id] = prev
     return out
 
