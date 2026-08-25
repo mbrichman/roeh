@@ -11,6 +11,14 @@ asks *"is what we wrote down still true?"* — which is the harder and more valu
 A stale record is more dangerous than no record, because an answer sourced from it reads
 exactly like an answer sourced from a current one. That asymmetry is why this exists.
 
+**You never write the trace yourself.** refresh runs two passes — CAPTURE (Phase 1) and
+RECONCILE (Phase 2) — but it is not an author: **the scribe is the sole author, and every
+trace write goes through it (Phase 3), including the §5 update (Phase 5).** The only file
+refresh writes directly is the profile (`profile_abs`, Phase 4), which is not the trace.
+Appending to the trace yourself — even §5 — is the wrong turn: it puts a second writer on
+an append-only file whose integrity depends on having exactly one. If a phase below tells
+you to "write" or "update" the trace, that means *hand it to the scribe*.
+
 **Model policy:** the delta mining in Phase 1 is extraction and runs on `sonnet`. **The
 drift check in Phase 2 does NOT** — run it inline, or on the session model. Deciding
 whether a recorded claim is *still true* is judgement against evidence, not retrieval,
@@ -28,7 +36,7 @@ trace was last written. If nothing is behind, run the drift check (Phase 2) anyw
 **the record can rot without anything new happening**, because the code moves under
 citations that still look valid.
 
-## Phase 1 — fold in what's new
+## Phase 1 — CAPTURE: fold in what's new
 
 Same rules as `/roeh:ingest`, scoped to the delta. **Dispatch commit and memory mining
 on `sonnet`** — it is bounded extraction, same as ingest. Session mining inherits.
@@ -42,7 +50,7 @@ on `sonnet`** — it is bounded extraction, same as ingest. Session mining inher
 **Dedupe against the whole trace before writing anything.** If it is already recorded,
 the correct output is *"already recorded at <cite>"*.
 
-## Phase 2 — the drift check (the part that is not ingest)
+## Phase 2 — RECONCILE: the drift check (the part that is not ingest)
 
 This is reconciliation proper. Work through the trace's own citations:
 
@@ -80,9 +88,12 @@ This is reconciliation proper. Work through the trace's own citations:
 5. **Does the staleness ledger still describe reality?** Resolved contradictions should
    be marked resolved — with a cite — not deleted.
 
-## Phase 3 — write
+## Phase 3 — write (through the scribe, always)
 
-Dispatch the **scribe** with the findings. Every drift finding becomes a NEW entry:
+**Dispatch the scribe with everything to be recorded** — the Phase 1 capture entries and
+the Phase 2 reconcile findings alike. refresh does not append; it hands the scribe the
+findings and the scribe authors and appends them. Each reconcile finding becomes a NEW
+entry:
 
 - `[CORRECTION — to <entry>]` for a wrong number or claim
 - `[REVERSAL — of <entry>]` for a decision that later work overturned
@@ -90,7 +101,7 @@ Dispatch the **scribe** with the findings. Every drift finding becomes a NEW ent
 
 **Never edit the original entry.** The record shows what was believed and when; that
 history is the point, not noise to tidy away. The scribe appends via `roeh append`, which
-cannot rewrite.
+cannot rewrite — and is the *only* writer, which is why the routing above is not optional.
 
 ## Phase 4 — refresh the profile
 
@@ -100,7 +111,8 @@ reversed but still sits in the profile makes the oracle warn people off the righ
 
 ## Phase 5 — update §5 and report
 
-§5 RESUME STATE is what a post-compaction session reads first. Update it, then report:
-what was folded in, what drifted, what you corrected, and **what you could not verify**.
-An honest "I could not check these twelve citations" is a correct result; a silent
-partial pass is how a record starts lying with confidence.
+§5 RESUME STATE is what a post-compaction session reads first. **Have the scribe append
+the updated §5** as part of Phase 3 — a new §5 block supersedes the old, never an in-place
+edit — then report: what was folded in, what drifted, what you corrected, and **what you
+could not verify**. An honest "I could not check these twelve citations" is a correct
+result; a silent partial pass is how a record starts lying with confidence.

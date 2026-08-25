@@ -11,6 +11,13 @@ evidence that survives, and writing it into an append-only record.
 Accepts `--quick` (single-pass, cheap), `--since <date>` (history floor), and
 `--deep` (force maximum fan-out).
 
+> **Where ingest sits in the model.** ingest is the CAPTURE pass at *bootstrap* scope —
+> the one-time genesis of the record, before there is a scribe-authored file to append
+> to. It builds the initial trace by fanning out reader agents and appending their
+> chapters (append-only, never rewriting). This is the one trigger that writes the record
+> wholesale rather than through the scribe; **after ingest, the scribe is the sole author,
+> and every incremental write — `/roeh:refresh`, the gate, on-demand — routes through it.**
+
 ## Phase 0 — resolve and scope
 
 1. `roeh config`. If not initialized, stop and point at `/roeh:init`.

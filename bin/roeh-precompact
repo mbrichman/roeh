@@ -10,13 +10,20 @@ week two. It compares the trace against evidence that work actually happened
 record is genuinely behind, naming the specific items so the entry can be
 written from evidence rather than from a fading context.
 
+This gate records the CAPTURE pass only — the scribe it dispatches (hooks.json)
+records what this session decided. The reconcile/drift check is deliberate
+(/roeh:refresh) and is NEVER fired at compaction: it is expensive judgement and
+the window is often already full. See the trace's 2026-08-25 gate-capture-only
+decision.
+
 Policy, per trigger:
   manual — BLOCK (exit 2). You typed /compact, so there is context room to
            record first. Blocking here costs a minute and saves the rationale.
   auto   — NEVER block. Auto-compact fires when the window is already full;
-           refusing it there can wedge the session with nowhere to go. A loud
-           injected reminder that survives into the post-compaction context is
-           the right instrument.
+           refusing it there can wedge the session with nowhere to go. The
+           reminder that survives into the post-compaction context is carried by
+           the SessionStart hook (trigger=compact), NOT injected from here — this
+           hook cannot inject context at all (see the NOTE in main()).
 
 Escape hatch: ROEH_SKIP=1 disables the block. A gate with no bypass is a wedge
 waiting for the one night you genuinely need to compact and move on.
