@@ -12,11 +12,12 @@ Accepts `--quick` (single-pass, cheap), `--since <date>` (history floor), and
 `--deep` (force maximum fan-out).
 
 > **Where ingest sits in the model.** ingest is the CAPTURE pass at *bootstrap* scope —
-> the one-time genesis of the record, before there is a scribe-authored file to append
-> to. It builds the initial trace by fanning out reader agents and appending their
-> chapters (append-only, never rewriting). This is the one trigger that writes the record
-> wholesale rather than through the scribe; **after ingest, the scribe is the sole author,
-> and every incremental write — `/roeh:refresh`, the gate, on-demand — routes through it.**
+> the one-time genesis of the record. It builds the initial trace by fanning out reader
+> agents that emit **v3 record-proposals**, then canonical-sequencing them and writing each
+> through **`roeh record`** (Phase 3) — append-only, typed edges, content ids, never
+> rewriting. This is the one trigger that writes the record wholesale; **after ingest, the
+> scribe is the sole author, and every incremental write — `/roeh:refresh`, the gate,
+> on-demand — routes through it.**
 
 ## Phase 0 — resolve and scope
 
@@ -157,7 +158,18 @@ mining will be weaker than the rest and the owner should know which pass to dist
   A restatement of what changed is worthless; the record already has the diff.
 - **What was REJECTED and why** wherever the evidence shows an option was weighed.
 - **Sovereignty** — if `local_only`, no web or network tools, nothing leaves the machine.
-- **Return structured entries**, not prose. Tagged, dated, cited.
+- **Emit v3 record-proposals, not prose.** Each proposal is the JSON `roeh record` accepts:
+  `{tag, lead, why, rejected, gates, supersedes, augments, conflicts, cites, atomic, date}`.
+  The `lead` is ONE atomic claim ≤90 chars (no `. ` inside); `why`/`rejected`/`gates` are its
+  facets; `cites` carry `file:line@sha` / SHA provenance; `atomic:true` unless the entry
+  genuinely bundles claims. Fields are single-line (no newlines, no `<!--`/`-->`).
+- **TYPE the edges at write time, or leave them off — never guess.** Where the evidence shows
+  this entry overturns an earlier one, name the target (its `date`+`tag`+`lead`, or its
+  content-id via `roeh id`) in `supersedes`; a refinement/extension is `augments`; a symmetric
+  tension is `conflicts`. If you cannot type an overturn with confidence, do NOT tag it
+  `REVERSAL`/`CORRECTION` — `roeh record` refuses an edgeless overturn, and that is correct;
+  record a plain `[DECISION]`/`[LESSON]` and note the uncertainty in `why`. Overturn-vs-refine
+  is decided at write time and must fail loud, never be reconstructed later from stale prose.
 
 ### Session mining — the hall-of-mirrors rule is non-negotiable
 
@@ -168,27 +180,47 @@ message. They are the richest vein and the most dangerous one.
    inputs, tool results, file-history and meta events.
 2. Then distil again, to **the owner's turns only**, each with a short snippet of what it
    responded to for context.
-3. **The assistant's own text is NOT a source.** It is the system's own emission; filing
-   it as history is the hall-of-mirrors failure — the record feeds itself its own
-   reflection, and every future session reads it back as fact. Legitimate sources are
-   the owner's turns and the code. If a candidate learning traces only to something an
-   assistant said, **drop it**.
+3. **Source rule — inherited from `agents/scribe.md`.** A FACT — a measurement, an
+   invariant, what-is-true — comes only from the owner's turns, the commits, or the code:
+   never from the assistant's own text (the hall-of-mirrors failure — the record feeds
+   itself its own reflection and reads it back as fact), and never from text the owner
+   *pasted* in, a review or an article, whoever pasted it (a Scry lesson). A fact tracing
+   only to an assistant or a pasted review: **drop it.** BUT one relaxation (owner decision,
+   2026-08-25): a **process lesson** — a dead-end, a recurring regression, a principle
+   earned in review — MAY cite co-produced in-session turns **as supporting evidence**,
+   self-marked: `Cite: co-produced in-session (transcript <id>) — supporting evidence, not
+   independently verified`. The tag marks it an observation, the citation marks its weight.
+   That is the difference between keeping a hard-won lesson and losing it — never for a fact,
+   never for pasted text.
 4. `roeh mark <session-id>` for each transcript folded in, so `/roeh:refresh` stays
    incremental.
 
-## Phase 3 — assemble by appending
+## Phase 3 — canonical-sequence, resolve edges, then `roeh record`
 
-As each agent lands, place its chapter in **chronological position** and append. Rules:
+The agents return v3 record-proposals; you do NOT append them raw. Collect them all, then:
 
-- **Never rewrite an existing entry.** If two agents cover the same commits, take the
-  denser one and say so — do not emit both.
-- Decode any HTML entities the agents return.
-- Cross-check: if an agent's finding contradicts an entry already in the file, that goes
-  in the **staleness ledger**, not silently into the prose.
-- Fill §1 from what the chapters actually establish. A principle is only load-bearing if
-  you can cite where it was learned — **do not seed §1 with plausible-sounding
-  engineering virtues.**
-- Fill §5 last: where the project stands, what is gated, what must not be re-derived.
+1. **Canonical sequence.** Sort every proposal chronologically by `date`, and within a date
+   put edge TARGETS before the entries that reference them — `roeh record` enforces
+   strictly-earlier by file order and refuses an edge whose target is not yet recorded.
+2. **Resolve edges.** Every id is content-derived, so compute each proposal's id with
+   `roeh id` and rewrite `supersedes`/`augments`/`conflicts` from named targets to ids. This
+   is where a **cross-agent edge** — D in one chapter overturns B in another — is resolved:
+   B's id is computable from its `date`+`tag`+`lead` without B being recorded yet.
+3. **Dedupe.** If two agents proposed the same entry (same `date`+`tag`+`lead`), keep the
+   denser and drop the other — `roeh record` refuses the second as a duplicate anyway.
+4. **Record serially.** `roeh record` each proposal in sequence. A refusal is a FINDING, not
+   a silent skip: an edgeless overturn, a dangling target, an introduced UNCERTAIN — fix the
+   proposal (type the edge, add the conflict link) or report it; never work around it.
+
+**A v3 trace is a flat append-only log — NOT the legacy §0–§4 skeleton.** The derived *map*
+(`roeh map`) is the structure now: it regenerates the ledger, the liveness, and the topic
+regions from the log, so do not hand-scaffold a §1 principles digest (that lives in the
+profile, Phase 4), a §2 memory digest, §3 chapters, or a §4 staleness ledger. The v3 file is
+just: a short **§0 header** (what this is + "read via `roeh map`"), the **flat run of recorded
+entries**, and a **§5 RESUME STATE** at the end (what SessionStart reads). Append-only makes
+EOF the honest home for every entry; the map gives them their shape. *(This drops the legacy
+sectioned scaffold; `roeh doctor`'s required-section check and the skeleton template are
+updated in lockstep — see §0 adoption.)*
 
 ## Phase 4 — the profile
 
