@@ -558,6 +558,45 @@ class TestRecord(RoehCase):
         code, _, _ = self.record(tag="DECISION", lead="x", why="ok\n  Supersedes: victimid00000000")
         self.assertNotEqual(code, 0)
 
+    def test_rejects_a_comma_in_a_cite_and_names_the_fix(self):
+        """Cites are comma-joined into the visible `Cites:` line, so a comma inside one would
+        split it. record refuses it and names the fix — the supporting-evidence cite format the
+        clean-ingest dogfood tripped on (`… supporting evidence, not independently verified`)."""
+        self.init()
+        self.make_trace()
+        before = len(self.read("docs/decision-trace.md"))
+        code, _, err = self.record(tag="LESSON", lead="a lesson", why="x", date="2026-08-25",
+                                   cites=["supporting evidence, not independently verified"])
+        self.assertNotEqual(code, 0)
+        self.assertIn("comma", err)
+        self.assertEqual(len(self.read("docs/decision-trace.md")), before,
+                         "a refused record still mutated the trace")
+
+    def test_accepts_a_semicolon_cite(self):
+        """The comma-free (semicolon) form of the supporting-evidence cite records cleanly and
+        round-trips whole through the reader."""
+        self.init()
+        self.make_trace()
+        code, out, err = self.record(tag="LESSON", lead="a lesson", why="x", date="2026-08-25",
+                                     cites=["supporting evidence; not independently verified"])
+        self.assertEqual(code, 0, err)
+        es = [e for e in self.entries() if e.id == out.strip()]
+        self.assertEqual(len(es), 1)
+        self.assertIn("supporting evidence; not independently verified", es[0].cites)
+
+    def test_rejects_a_comma_in_a_string_form_cite(self):
+        """A comma-bearing cite passed as a STRING must be refused, not silently split into two
+        fragments by _idlist before the guard runs (code-review finding on the first fix)."""
+        self.init()
+        self.make_trace()
+        before = len(self.read("docs/decision-trace.md"))
+        code, _, err = self.record(tag="LESSON", lead="a lesson", why="x", date="2026-08-25",
+                                   cites="supporting evidence, not independently verified")
+        self.assertNotEqual(code, 0)
+        self.assertIn("comma", err)
+        self.assertEqual(len(self.read("docs/decision-trace.md")), before,
+                         "a refused record still mutated the trace")
+
     def test_five_part_supersession_is_dead_not_uncertain(self):
         """The P1-2 fix end to end: a real five-part entry (WHY/REJECTED/GATES), once superseded, is
         DEAD — not falsely flagged UNCERTAIN. This also proves record does not over-refuse it."""

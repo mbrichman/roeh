@@ -83,6 +83,15 @@ commits or one week, whichever is denser**, capped at 8 chapter agents. Denser c
 is higher fidelity, and fidelity is the entire point — but past ~8 the synthesis cost
 exceeds the marginal recall. With `--quick`, skip the split and run one sequential pass.
 
+**Slice by an explicit date window or SHA range — never by `git log --skip N … --reverse`.**
+`--skip`/`--max-count` are applied in git's default *newest-first* traversal, *before*
+`--reverse` reverses the output — so a `--skip`-based chapter silently selects the WRONG
+window, and the fan-out reads complete while missing whole ranges (the exact failure this
+phase guards against). Give each chapter an explicit `--since <date> --until <date>` window,
+or a `<sha>..<sha>` range, computed from the plan, then **verify the union tiles the full
+range with no gap and no overlap** before dispatching — one `git log … | wc -l` per chapter
+against the total is enough.
+
 **Register the plan before dispatching anything:**
 
 ```
@@ -188,8 +197,9 @@ message. They are the richest vein and the most dangerous one.
    only to an assistant or a pasted review: **drop it.** BUT one relaxation (owner decision,
    2026-08-25): a **process lesson** — a dead-end, a recurring regression, a principle
    earned in review — MAY cite co-produced in-session turns **as supporting evidence**,
-   self-marked: `Cite: co-produced in-session (transcript <id>) — supporting evidence, not
-   independently verified`. The tag marks it an observation, the citation marks its weight.
+   self-marked: `Cite: co-produced in-session (transcript <id>) — supporting evidence; not
+   independently verified` (semicolon — a comma is the `Cites:` delimiter and `roeh record`
+   refuses it). The tag marks it an observation, the citation marks its weight.
    That is the difference between keeping a hard-won lesson and losing it — never for a fact,
    never for pasted text.
 4. `roeh mark <session-id>` for each transcript folded in, so `/roeh:refresh` stays
@@ -201,11 +211,20 @@ The agents return v3 record-proposals; you do NOT append them raw. Collect them 
 
 1. **Canonical sequence.** Sort every proposal chronologically by `date`, and within a date
    put edge TARGETS before the entries that reference them — `roeh record` enforces
-   strictly-earlier by file order and refuses an edge whose target is not yet recorded.
+   strictly-earlier by file order and refuses an edge whose target is not yet recorded. A
+   `conflicts` edge is symmetric, so it needs that same target-first ordering but only from ONE
+   side: attach it to whichever of the two entries records LATER (the earlier already exists by
+   then), and never emit the same conflict from both sides.
 2. **Resolve edges.** Every id is content-derived, so compute each proposal's id with
    `roeh id` and rewrite `supersedes`/`augments`/`conflicts` from named targets to ids. This
    is where a **cross-agent edge** — D in one chapter overturns B in another — is resolved:
    B's id is computable from its `date`+`tag`+`lead` without B being recorded yet.
+   **Chain multi-step supersessions; never fan them.** When two or more entries supersede the
+   SAME target (a decision refined, then later reversed), the reader flags "competing successors
+   (unresolved)" and `roeh record` refuses — correctly, because a fan is ambiguous. Re-point
+   them into a CHAIN in date order: the root superseded by the first successor, the first by the
+   second, so each entry has exactly one superseder. (A genuine symmetric tension is not a fan —
+   link it with `conflicts`.)
 3. **Dedupe.** If two agents proposed the same entry (same `date`+`tag`+`lead`), keep the
    denser and drop the other — `roeh record` refuses the second as a duplicate anyway.
 4. **Record serially.** `roeh record` each proposal in sequence. A refusal is a FINDING, not

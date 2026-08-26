@@ -634,13 +634,22 @@ def cmd_record(args):
         die("atomic must be a JSON boolean (true or false)")
 
     edges = {k: _idlist(req.get(k)) for k in ("supersedes", "augments", "conflicts")}
-    cites = _idlist(req.get("cites"))
+    # A comma in a cite must be caught on the RAW input, BEFORE _idlist splits a string-form
+    # cite on commas — that split turns one comma-bearing cite into two silent fragments and
+    # hides the very mangle this guards against (code-review). Cites are comma-joined into the
+    # visible `Cites:` line, so a comma inside one is never valid; pass multiple cites as a list.
+    _raw_cites = req.get("cites")
+    if ((isinstance(_raw_cites, str) and "," in _raw_cites)
+            or (isinstance(_raw_cites, list) and any("," in str(x) for x in _raw_cites))):
+        die("a cite contains a comma — cites are comma-separated in the visible Cites: line, so "
+            "a comma inside one would split it; use ';' or ' — ', and pass multiple cites as a list")
+    cites = _idlist(_raw_cites)
     hints = _idlist(req.get("topic_hint"))
     for name in ("supersedes", "augments", "conflicts"):
         for t in edges[name]:
             _reject_unsafe(t, f"{name} id {t!r}", extra=(",",))
     for c in cites:
-        _reject_unsafe(c, f"cite {c!r}", extra=(",",))
+        _reject_unsafe(c, f"cite {c!r}")
     for h in hints:
         # `=` too: topic-hint is the ONE list that lands in the machine comment, where ` word=` would
         # forge a meta key (review P0-1/#5). Edges/cites live in visible field lines, so `,` suffices there.

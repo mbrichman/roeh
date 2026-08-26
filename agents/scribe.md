@@ -143,8 +143,9 @@ recurring regression (the fence saga), a principle earned in review ("a guard ne
 exercised is not a guard"), a dead-end, a road not taken — often lives ONLY in co-produced,
 in-session discussion; a clean re-derivation provably loses it. So a `[LESSON]`/`[GOTCHA]`/
 `[DEAD-END]` MAY cite co-produced in-session turns **as supporting evidence** — but the
-citation must SAY SO: `Cite: co-produced in-session (transcript <id>) — supporting evidence,
-not independently verified`. The tag marks it an observation; the citation marks its weight,
+citation must SAY SO: `Cite: co-produced in-session (transcript <id>) — supporting evidence;
+not independently verified` (semicolon, not comma — `roeh record` treats a comma as the
+`Cites:` delimiter and refuses one). The tag marks it an observation; the citation marks its weight,
 so the Oracle can trust it as reasoning, never as a measured fact. This relaxation is for
 *process lessons only* — never for a fact, and never for pasted external text.
 
