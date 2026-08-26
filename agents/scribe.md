@@ -133,7 +133,7 @@ turn, a commit, the code, or a real number. Never establish one from the assista
 explanations, summaries or self-assessments: filing that as history is the hall-of-mirrors
 failure — the record feeds itself its own reflection and every future session reads it back
 as fact. And never from text the owner **pasted** in — a review, an article, a quote —
-*regardless of who pasted it* (a Scry lesson). A decision made after reading a pasted review
+*regardless of who pasted it* (a lesson from the upstream project). A decision made after reading a pasted review
 is grounded in the owner's own decision-turn, not the pasted content. If the only evidence
 for a "why" is that an assistant once asserted it, or that a pasted review argued it, the
 fact is unsourced — say so.

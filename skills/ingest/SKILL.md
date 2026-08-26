@@ -193,7 +193,7 @@ message. They are the richest vein and the most dangerous one.
    invariant, what-is-true — comes only from the owner's turns, the commits, or the code:
    never from the assistant's own text (the hall-of-mirrors failure — the record feeds
    itself its own reflection and reads it back as fact), and never from text the owner
-   *pasted* in, a review or an article, whoever pasted it (a Scry lesson). A fact tracing
+   *pasted* in, a review or an article, whoever pasted it (a lesson from the upstream project). A fact tracing
    only to an assistant or a pasted review: **drop it.** BUT one relaxation (owner decision,
    2026-08-25): a **process lesson** — a dead-end, a recurring regression, a principle
    earned in review — MAY cite co-produced in-session turns **as supporting evidence**,
