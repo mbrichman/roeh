@@ -4,7 +4,7 @@
   },
   "mode": "repo",
   "precompact": {
-    "block_manual": true,
+    "block_manual": false,
     "nag_auto": true
   },
   "profile": ".claude/roeh-profile.md",

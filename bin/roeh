@@ -162,7 +162,11 @@ def default_config(root, mode="repo"):
         # has curated by hand and does not want an unattended agent appending
         # to. `roeh append` still works — the line is drawn at automation, not
         # at writing.
-        "precompact": {"block_manual": True, "nag_auto": True, "record": True},
+        # `block_manual: false` (default): a manual /compact RECORDS then proceeds
+        # — it never blocks. The owner found blocking irritating (2026-08-25);
+        # set it true to opt into the strict gate that refuses /compact until the
+        # record is current.
+        "precompact": {"block_manual": False, "nag_auto": True, "record": True},
         "sovereignty": {"local_only": mode == "local",
                         "network_forbidden": True},
         "gate": {"enabled": False},

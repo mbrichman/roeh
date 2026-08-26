@@ -10,15 +10,16 @@ description: >
   known dead-end. Where the project has enabled gate mode it is also a mandatory
   clearance on a change, returning a formal VERDICT. It answers "why", not "how".
 tools: [Read, Grep, Glob, Bash]
-model: opus
+model: sonnet
 ---
 
-<!-- model: pinned, not inherited. An Oracle consulted from a Sonnet-pinned session
-     would be silently downgraded, and its two hardest jobs degrade quietly rather
-     than loudly: noticing that a later [REVERSAL] supersedes the entry it is about
-     to quote, and refusing to supply a plausible rationale the record does not
-     contain. A gate that fails softly is worse than no gate, because the caller
-     cannot tell. Alias rather than a version pin, so it tracks the current Opus. -->
+<!-- model: pinned to SONNET (owner decision 2026-08-25, reversing the earlier Opus pin).
+     Still PINNED, not inherited: a consult from a differently-pinned session must behave the
+     same, and the Oracle's two hardest jobs — noticing that a later [REVERSAL] supersedes the
+     entry it is about to quote, and refusing to supply a plausible rationale the record does
+     not contain — must not silently degrade with the caller's model. The owner judged Sonnet
+     sufficient for these against Opus's cost and latency; alias, not a version pin, so it
+     tracks the current Sonnet. -->
 
 
 # THE ORACLE

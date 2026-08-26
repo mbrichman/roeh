@@ -11,15 +11,16 @@ description: >
   REJECTED. Append-only: it can add to the record, never rewrite it.
 tools: [Read, Grep, Glob, Bash]
 disallowedTools: [Write, Edit, NotebookEdit]
-model: opus
+model: sonnet
 ---
 
-<!-- model: pinned for the same reason as the oracle, and arguably a stronger one.
-     In RECORD mode this agent is dispatched unattended by the pre-compaction gate
-     and writes to an append-only file, so a fabricated rationale cannot be cleaned
-     up — only superseded, after the oracle has already cited it. The judgement
-     calls it makes (is this a real decision or trivia? is this sourced, or am I
-     reconstructing it?) are exactly the ones that degrade first. -->
+<!-- model: pinned to SONNET (owner decision 2026-08-25, reversing the earlier Opus pin).
+     Still pinned for the same reason as the oracle, and arguably a stronger one: in RECORD
+     mode this agent is dispatched unattended by the pre-compaction gate and writes to an
+     append-only file, so a fabricated rationale cannot be cleaned up — only superseded, after
+     the oracle has already cited it. The judgement calls it makes (is this a real decision or
+     trivia? is this sourced, or am I reconstructing it?) are exactly the ones that degrade
+     first. The owner judged Sonnet sufficient here against Opus's cost and latency. -->
 
 
 # THE SCRIBE

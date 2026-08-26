@@ -17,16 +17,21 @@ the window is often already full. See the trace's 2026-08-25 gate-capture-only
 decision.
 
 Policy, per trigger:
-  manual — BLOCK (exit 2). You typed /compact, so there is context room to
-           record first. Blocking here costs a minute and saves the rationale.
+  manual — RECORD, do not block (default). You typed /compact; the scribe
+           (dispatched via hooks.json) records what this session decided and
+           compaction proceeds — no interruption. Set `precompact.block_manual:
+           true` to opt into the strict gate that BLOCKS (exit 2) until the
+           record is current. The owner found the block irritating and turned it
+           off by default (2026-08-25): refresh as necessary, then compact.
   auto   — NEVER block. Auto-compact fires when the window is already full;
            refusing it there can wedge the session with nowhere to go. The
            reminder that survives into the post-compaction context is carried by
            the SessionStart hook (trigger=compact), NOT injected from here — this
            hook cannot inject context at all (see the NOTE in main()).
 
-Escape hatch: ROEH_SKIP=1 disables the block. A gate with no bypass is a wedge
-waiting for the one night you genuinely need to compact and move on.
+Either way the scribe sentinel is dropped so the record is brought current; what
+changes is only whether a manual /compact waits. Escape hatch for the opt-in
+block: ROEH_SKIP=1 bypasses it.
 """
 import json
 import os

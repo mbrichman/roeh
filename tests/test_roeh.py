@@ -1082,12 +1082,26 @@ class TestPreCompactHook(RoehCase):
         self.assertEqual(code, 0)
         self.assertIn("current", json.loads(out)["systemMessage"])
 
-    def test_manual_blocks_when_behind(self):
+    def test_manual_default_records_without_blocking(self):
+        """Default (block_manual:false, 2026-08-25 owner call): a manual /compact drops the
+        scribe sentinel and PROCEEDS — it records, it does not block."""
         self.init()
         self.make_trace()
         self.commit("unrecorded decision")
+        code, out, _ = self.hook(PRECOMPACT, {"trigger": "manual"})
+        self.assertEqual(code, 0, "the default manual /compact must not block")
+        self.assertIn("behind", json.loads(out)["systemMessage"])
+        self.assertEqual(self.roeh("pending")[0], 0, "the scribe sentinel was not dropped")
+
+    def test_manual_blocks_only_when_opted_in(self):
+        """block_manual:true is the opt-in strict gate: exit 2 with the evidence."""
+        self.init()
+        self.make_trace()
+        self.commit("unrecorded decision")
+        self.set_config(precompact={"block_manual": True, "nag_auto": True,
+                                    "record": True})
         code, _, err = self.hook(PRECOMPACT, {"trigger": "manual"})
-        self.assertEqual(code, 2, "manual compaction must be blocked")
+        self.assertEqual(code, 2, "block_manual:true must block")
         self.assertIn("COMPACTION BLOCKED", err)
         self.assertIn("unrecorded decision", err)
 
@@ -1106,10 +1120,12 @@ class TestPreCompactHook(RoehCase):
         self.assertNotIn("hookSpecificOutput", d,
                          "PreCompact rejects hookSpecificOutput at runtime")
 
-    def test_skip_env_bypasses_the_block(self):
+    def test_skip_env_bypasses_the_opt_in_block(self):
         self.init()
         self.make_trace()
         self.commit()
+        self.set_config(precompact={"block_manual": True, "nag_auto": True,
+                                    "record": True})
         code, _, _ = self.hook(PRECOMPACT, {"trigger": "manual"},
                                env={"ROEH_SKIP": "1"})
         self.assertEqual(code, 0)
@@ -1179,9 +1195,10 @@ class TestPreCompactHook(RoehCase):
         self.init()
         self.make_trace()
         self.make_session("live")
-        # Without the session id it looks behind and blocks — the old bug.
-        code, _, _ = self.hook(PRECOMPACT, {"trigger": "manual"})
-        self.assertEqual(code, 2, "sanity: an unmined session does block")
+        # Without the session id it reads behind (the old bug would have wedged here).
+        code, out, _ = self.hook(PRECOMPACT, {"trigger": "manual"})
+        self.assertEqual(code, 0, "default never blocks")
+        self.assertIn("behind", json.loads(out)["systemMessage"])
         # With it, the active session is excluded and the gate clears.
         code, out, _ = self.hook(PRECOMPACT,
                                  {"trigger": "manual", "session_id": "live"})
@@ -1195,6 +1212,8 @@ class TestPreCompactHook(RoehCase):
         self.make_trace()
         self.make_session("live")
         self.make_session("earlier")
+        self.set_config(precompact={"block_manual": True, "nag_auto": True,
+                                    "record": True})
         code, _, err = self.hook(PRECOMPACT,
                                  {"trigger": "manual", "session_id": "live"})
         self.assertEqual(code, 2)
@@ -1326,7 +1345,7 @@ class TestManifests(unittest.TestCase):
         for name in ("oracle", "scribe"):
             with open(os.path.join(ROOT, "agents", f"{name}.md")) as f:
                 head = f.read().split("---")[1]
-            self.assertIn("model: opus", head, f"{name} is not pinned")
+            self.assertIn("model: sonnet", head, f"{name} is not pinned")
 
     def test_scribe_cannot_write(self):
         """Append-only is structural: the scribe has no Write or Edit tool."""
