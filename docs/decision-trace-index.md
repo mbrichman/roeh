@@ -7,7 +7,7 @@ of what the record contains. Then `roeh read <§N|YYYY-MM-DD>` to pull the
 chapters you actually need. Grepping the trace directly without reading
 this first is how you confidently miss the entry that overturns your answer.
 
-Trace: 763 lines · 11 chapters · 79 tagged entries
+Trace: 784 lines · 11 chapters · 80 tagged entries
 
 ## Sections
 
@@ -28,7 +28,8 @@ Trace: 763 lines · 11 chapters · 79 tagged entries
 - **§5** — lines 665–693 · `roeh read §5`
 - **§5** — lines 694–717 · `roeh read §5`
 - **§5** — lines 718–744 · `roeh read §5`
-- **§5** — lines 745–763 · `roeh read §5`
+- **§5** — lines 745–768 · `roeh read §5`
+- **§5** — lines 769–784 · `roeh read §5`
 
 ## Chapters
 
@@ -39,10 +40,10 @@ Trace: 763 lines · 11 chapters · 79 tagged entries
 - **2026-08-17 — retrieval layer & read-only mode (recorded 2026-08-24, out of chronological order)** — lines 455–472 · 14 entries · `roeh read "2026-08-17"`
 - **2026-08-18 — Python floor & first-contact messaging (recorded 2026-08-24, out of chronological order)** — lines 473–482 · 3 entries · `roeh read "2026-08-18"`
 - **2026-08-24 — second refresh** — lines 483–494 · 6 entries · `roeh read "2026-08-24"`
-- **2026-08-25 — the v3 read path, built consumer-first** — lines 543–560 · 21 entries · `roeh read "2026-08-25"`
-- **2026-08-25 — the scribe/refresh architecture: one author, two passes** — lines 577–592 · 21 entries · `roeh read "2026-08-25"`
-- **2026-08-25 — the v3 write-path spec, and validating by clean re-derivation** — lines 657–664 · 21 entries · `roeh read "2026-08-25"`
-- **2026-08-25 — build step 3: the ingest charter under v3, and the flat-log format it settles** — lines 737–744 · 21 entries · `roeh read "2026-08-25"`
+- **2026-08-25 — the v3 read path, built consumer-first** — lines 543–560 · 22 entries · `roeh read "2026-08-25"`
+- **2026-08-25 — the scribe/refresh architecture: one author, two passes** — lines 577–592 · 22 entries · `roeh read "2026-08-25"`
+- **2026-08-25 — the v3 write-path spec, and validating by clean re-derivation** — lines 657–664 · 22 entries · `roeh read "2026-08-25"`
+- **2026-08-25 — build step 3: the ingest charter under v3, and the flat-log format it settles** — lines 737–744 · 22 entries · `roeh read "2026-08-25"`
 
 ## Supersessions and dead-ends — check these before quoting anything
 
@@ -136,3 +137,4 @@ Trace: 763 lines · 11 chapters · 79 tagged entries
 - `DECISION` L715 (2026-08-25) — The scribe's source rule is REFINED — pasted external text is NEVER a source; FACTS stay strict; PROCESS LESSO
 - `DECISION` L740 (2026-08-25) — Build step 3 PROPER is DONE — the ingest charter is rewired so `/roeh:ingest` produces a v3 trace, not a legac
 - `DECISION` L742 (2026-08-25) — A v3 trace is a FLAT append-only log — a short §0 header + the flat run of recorded entries + a §5 RESUME STAT
+- `DECISION` L766 (2026-08-25) — The doctor + skeleton FOLLOW-ON is DONE (`830fa7a`) — a flat v3 trace is now a fully valid trace END-TO-END (r
