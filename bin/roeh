@@ -8,7 +8,8 @@ does the trace live", which is exactly how a tool ends up with four subtly
 different answers and no one able to say which is authoritative.
 
 Subcommands:
-  init      write .claude/roeh.json + the trace skeleton
+  init      write .claude/roeh.json (config only); the trace itself is created
+            by /roeh:ingest (v3 skeleton), not here
   config    resolve and print the effective config
   status    is the record behind the work? (commits / sessions / memory)
   append    APPEND raw text to the trace — the low-level write primitive
