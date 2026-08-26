@@ -96,25 +96,29 @@ grows. Past roughly **400KB or 1,500 lines** it no longer fits one comfortable r
 
 When that happens, do NOT start grepping. **You cannot grep for what you do not know to
 look for**, and that failure is silent: you get a confident answer sourced from the two
-chapters you happened to match, with no sign of the entry that overturns it. Use the
-index — that is what it is for:
+regions you happened to match, with no sign of the entry that overturns it. Read through
+the derived **map** instead — the collapsing projection of the log; reading its top matter
+in full is what preserves the global awareness a whole-file read gives you:
 
-1. **`roeh index` output, read IN FULL, always.** ~15% the size of the trace and it lists
-   every tagged entry with its line number, chapter and citation. This is what preserves
-   the global awareness a full read gives you. Run `roeh index` first if it is missing or
-   older than the trace.
-2. **§0, §1 and §5 in full, always** — `roeh read §1`. Small, load-bearing, and §5 is
-   what the asker most often actually needs.
-3. **The contradictions/staleness ledger in full, always** — the record's own index of
-   what it knows is unreliable. The index's *"Supersessions and dead-ends"* block is the
-   fast path to the same information.
-4. **Chapters, never lines.** `roeh chapters <term>` returns the chapters that match;
-   `roeh read <chapter>` pulls one end to end. Read the neighbours too. A `[REVERSAL]` or
-   `[CORRECTION]` almost always lives in a *later* chapter than the entry it overturns —
-   a line-level read is precisely how you confidently return superseded history as
-   current.
+1. **`roeh map`, then read its preamble, `## live` and `## ledger` IN FULL, always.** The map
+   is the root control plane: a bounded digest of §0/§1/§5, one line per LIVE entry, and the
+   ledger of supersessions / conflicts / dead-ends / uncertainties. Regenerate it (`roeh map`)
+   if it is missing or `roeh verify` reports it stale.
+2. **`roeh verify` before you trust the map.** `0` fresh + intact; `6` stale (a projection
+   input moved — regenerate with `roeh map`); `7` tamper (the chain broke — stop and report
+   it). A stale map read as current is the silent failure this whole layer exists to prevent.
+3. **`roeh scope "<terms of the question>"` for the literal drill set** — every region whose
+   bloom matches a token of your query, mechanically complete with no false negatives. Those
+   you MUST drill; the map's own `## regions` names the rest.
+4. **`roeh read <region | id | §N>` to pull exactly what you need, never lines.** A region read
+   is a sub control-plane (its own live + ledger); an id read returns the entry with its
+   **read-closure** — live augments and symmetric conflicts surfaced before you cite it, so a
+   corrected value never comes back stale and a live tip never hides a contradiction. `read §1`
+   / `read §5` pull those sections (LAST-wins). A `[REVERSAL]`/`[CORRECTION]` almost always
+   lives in a *later* region than what it overturns — which is exactly why you read the map's
+   ledger and the entry's closure rather than grepping lines.
 5. **Say which mode you used.** If you did not read the whole file, state it in one line
-   at the end, naming the chapters you did read. An asker who knows the read was partial
+   at the end, naming the regions you drilled. An asker who knows the read was partial
    can ask you to go deeper; one who assumes it was total cannot. **This is not optional
    politeness** — it is the only signal that distinguishes a complete answer from a
    partial one, and they otherwise look identical.

@@ -24,6 +24,7 @@ Run:  python3 -m unittest discover -s tests -v
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -825,100 +826,122 @@ class TestIngestLifecycle(RoehCase):
         self.assertEqual(before, self.read("docs/decision-trace.md"))
 
 
-class TestIndexAndRetrieval(RoehCase):
-    """The answer to a trace outgrowing a single read."""
+class TestReadPath(RoehCase):
+    """The v3 read path: `roeh map` / `read` / `scope` / `verify` wire the derived collapsing
+    projection (bin/roeh_map.py) into the CLI. Exit codes are the contract (§4). These supersede
+    `index`/`chapters`, which are gone — a grep ladder cannot find what you do not know to look for."""
 
-    def big_trace(self):
-        self.init()
-        body = ["# T", "", "## §1 — Principles", "",
-                "- **[PRINCIPLE]** one. Cite: `aaa1111`.", ""]
-        # Multi-line entries, because that is what a real entry looks like: the
-        # scribe requires the decision, the why, what was rejected, citations
-        # and what it gates. A fixture of one-line bullets would make the index
-        # look worthless, since the index line is longer than the source line.
-        for i in range(40):
-            body += [f"### 2026-09-{i%28+1:02d} — chapter {i}", "",
-                     f"- **[DECISION]** decided thing {i}. WHY: the obvious",
-                     f"  approach failed under load and this one did not.",
-                     f"  REJECTED: the obvious approach, which needed a lock.",
-                     f"  GATES: nothing further. Cite: `sha{i:04d}`.",
-                     f"- `[LESSON]` learned thing {i}. The measurement moved",
-                     f"  from 512 to 128 once the tokenizer changed, and the",
-                     f"  old figure had been quoted twice before anyone checked.", ""]
-        body += ["### 2026-10-01 — later", "",
-                 "- **[REVERSAL — of decided thing 3]** overturned. Cite: `zzz9999`.",
-                 "", "## §5 — Resume state", "", "- **Where we are:** here", ""]
-        self.write("docs/decision-trace.md", "\n".join(body) + "\n")
+    def record(self, **obj):
+        return self.roeh("record", stdin=json.dumps(obj))
 
-    def test_index_finds_both_tag_dialects(self):
-        """`- **[TAG]**` and `` - `[TAG]` `` must both count. Recognising only
-        one dialect under-reports silently, which for an index is fatal."""
-        self.big_trace()
-        code, out, _ = self.roeh("index")
-        self.assertEqual(code, 0, out)
-        idx = self.read("docs/decision-trace-index.md")
-        self.assertEqual(idx.count("`DECISION`"), 40)
-        self.assertEqual(idx.count("`LESSON`"), 40, "backtick dialect missed")
-
-    def test_index_does_not_mistake_wikilinks_for_tags(self):
+    def seed(self):
+        """A small v3 trace: a live decision that supersedes an earlier one, plus a rare token."""
         self.init()
         self.make_trace()
-        self.roeh("append", "-", stdin="\n- **[[some-wikilink]]** not a tag\n")
-        self.roeh("index")
-        self.assertNotIn("some-wikilink", self.read("docs/decision-trace-index.md"))
+        _, a, _ = self.record(tag="DECISION", lead="store facts in an append-only ledger",
+                              why="the log is the authority", date="2026-06-05",
+                              cites=["db/models.py:40@aaaaaaa"], topic_hint=["storage"])
+        self.record(tag="REVERSAL", lead="move to a derived collapsing map projection",
+                    why="the flat ledger did not scale for reads",
+                    supersedes=[a.strip()], date="2026-08-01", topic_hint=["storage"])
+        self.record(tag="LESSON", lead="the quokka_flag token is a rare literal",
+                    why="for a bloom recall test", date="2026-08-02", topic_hint=["bloom"])
+        return a.strip()
 
-    def test_index_surfaces_supersessions_first(self):
-        self.big_trace()
-        self.roeh("index")
-        idx = self.read("docs/decision-trace-index.md")
-        self.assertIn("Supersessions and dead-ends", idx)
-        head = idx.split("## All entries")[0]
-        self.assertIn("REVERSAL", head, "reversal not surfaced before the bulk")
+    def test_map_materializes_and_fits(self):
+        self.seed()
+        code, out, err = self.roeh("map")
+        self.assertEqual(code, 0, err)
+        self.assertIn("projection-id", out)
+        self.assertTrue(os.path.exists(os.path.join(self.dir, "docs/decision-trace-map.md")))
+        self.assertTrue(os.path.exists(os.path.join(self.dir, "docs/decision-trace-bloom.json")))
+        m = self.read("docs/decision-trace-map.md")
+        self.assertIn("## live", m)
+        self.assertIn("## ledger", m)
 
-    def test_index_is_much_smaller_than_the_trace(self):
-        self.big_trace()
-        self.roeh("index")
-        trace = len(self.read("docs/decision-trace.md"))
-        idx = len(self.read("docs/decision-trace-index.md"))
-        self.assertLess(idx, trace, "an index bigger than the trace is useless")
+    def test_superseded_value_is_not_in_live(self):
+        self.seed()
+        self.roeh("map")
+        m = self.read("docs/decision-trace-map.md")
+        live = m.split("## ledger")[0]
+        self.assertIn("derived collapsing map", live)
+        self.assertNotIn("append-only ledger", live, "a superseded value leaked into ## live")
 
-    def test_read_extracts_one_chapter_exactly(self):
-        self.big_trace()
-        _, out, _ = self.roeh("read", "2026-10-01")
-        self.assertIn("overturned", out)
-        self.assertNotIn("decided thing 0", out, "bled into a neighbouring chapter")
+    def test_verify_fresh_then_stale_on_append(self):
+        self.seed()
+        self.roeh("map")
+        self.assertEqual(self.roeh("verify")[0], 0)
+        # freshness hashes the LOG BYTES, so an append moves the projection-id
+        self.roeh("append", "-", stdin="\n<!-- freshness probe -->\n")
+        code, out, _ = self.roeh("verify")
+        self.assertEqual(code, 6, out)
 
-    def test_read_extracts_a_section(self):
-        self.big_trace()
-        _, out, _ = self.roeh("read", "§5")
-        self.assertIn("Where we are", out)
-        self.assertNotIn("[DECISION]", out)
+    def test_verify_detects_tamper(self):
+        self.seed()
+        self.roeh("map")
+        t = self.read("docs/decision-trace.md")
+        self.write("docs/decision-trace.md",
+                   re.sub(r"chain=[0-9a-f]{16}", "chain=" + "0" * 16, t, count=1))
+        code, out, _ = self.roeh("verify")
+        self.assertEqual(code, 7, out)
 
-    def test_chapters_returns_chapter_granularity(self):
-        """A [REVERSAL] usually lives in a LATER chapter than what it
-        overturns, so line-level results hand back dead claims."""
-        self.big_trace()
-        _, out, _ = self.roeh("chapters", "overturned")
-        self.assertIn("2026-10-01", out)
-        self.assertIn("roeh read", out, "must tell the caller how to pull it")
+    def test_read_entry_surfaces_its_read_closure(self):
+        self.seed()
+        _, aid, _ = self.record(tag="DECISION", lead="a base for augmentation",
+                                why="x", date="2026-08-03")
+        self.record(tag="LESSON", lead="an augmenting refinement", why="y",
+                    augments=[aid.strip()], date="2026-08-04")
+        code, out, _ = self.roeh("read", aid.strip())
+        self.assertEqual(code, 0)
+        self.assertIn("live augments", out)
 
-    def test_doctor_fails_past_threshold_without_an_index(self):
-        self.big_trace()
+    def test_read_unknown_selector_is_exit_4(self):
+        self.seed()
+        self.assertEqual(self.roeh("read", "no-such-region")[0], 4)
+
+    def test_read_section_is_last_wins(self):
+        self.seed()
+        self.roeh("append", "-", stdin="\n## §5 — Resume state\n\n- **Where we are:** LATER\n")
+        code, out, _ = self.roeh("read", "§5")
+        self.assertEqual(code, 0)
+        self.assertIn("LATER", out)
+
+    def test_scope_no_false_negative_for_a_literal(self):
+        self.seed()
+        self.roeh("map")
+        code, out, _ = self.roeh("scope", "quokka_flag")
+        self.assertEqual(code, 0)
+        self.assertRegex(out, r"drill set \([1-9]", "the rare literal's region was not in scope")
+
+    def test_scope_reads_the_sidecar_when_fresh(self):
+        self.seed()
+        self.roeh("map")
+        _, out, _ = self.roeh("scope", "storage")
+        self.assertIn("sidecar (fresh)", out)
+
+    def test_index_and_chapters_are_gone(self):
+        """One live retrieval story: the superseded primitives must not resolve."""
+        self.seed()
+        self.assertNotEqual(self.roeh("index")[0], 0)
+        self.assertNotEqual(self.roeh("chapters", "x")[0], 0)
+
+    def test_doctor_fails_past_threshold_without_a_map(self):
+        self.seed()
         body = self.read("docs/decision-trace.md")
         self.write("docs/decision-trace.md", body + ("\n- filler" * 1600))
         code, out, _ = self.roeh("doctor")
         self.assertEqual(code, 1)
-        self.assertIn("NO index", out)
+        self.assertIn("NO map", out)
 
-    def test_doctor_warns_when_the_index_is_stale(self):
-        self.big_trace()
+    def test_doctor_warns_when_the_map_is_stale(self):
+        self.seed()
         body = self.read("docs/decision-trace.md")
         self.write("docs/decision-trace.md", body + ("\n- filler" * 1600))
-        self.roeh("index")
+        self.roeh("map")
         time.sleep(1.1)
-        self.roeh("append", "-", stdin="\n- **[DECISION]** later thing.\n")
+        self.roeh("append", "-", stdin="\n- **[DECISION] later thing.** WHY: x.\n")
         _, out, _ = self.roeh("doctor")
-        self.assertIn("index is older than the trace", out)
+        self.assertIn("map is older than the trace", out)
 
 
 class TestDoctor(RoehCase):

@@ -378,9 +378,10 @@ roeh config                          resolve effective paths
 roeh status [--json]                 is the record behind the work?
 roeh doctor [--fix]                  check artifacts against the running plugin
 
-roeh index                           regenerate <trace>-index.md
-roeh read <§N | chapter>             pull one section or chapter, exactly
-roeh chapters <term>                 which chapters match — never which lines
+roeh map [--budget T]                regenerate <trace>-map.md + -bloom.json
+roeh read <region | id | §N>         pull one control plane or entry, exactly
+roeh scope "<query>"                 the regions a query's tokens drill into
+roeh verify                          map freshness + chain integrity (6 stale / 7 tamper)
 
 roeh append [file|-]                 APPEND to the trace (the only write path)
 roeh sessions [--unmined]            this project's transcripts
@@ -502,30 +503,37 @@ looks: **you cannot grep for what you do not know to look for.** You get a confi
 answer sourced from the two chapters you happened to match, with no sign of the entry
 that overturns it. Silent, and indistinguishable from a complete answer.
 
-So roeh gives the Oracle an index and retrieval primitives instead of an instruction to
-be careful:
+So roeh gives the Oracle a derived **map** and retrieval primitives instead of an
+instruction to be careful:
 
 ```bash
-roeh index                 # regenerate; ~15% the size of the trace
-roeh chapters "cascade"    # which CHAPTERS match, never which lines
-roeh read 2026-08-12       # pull one chapter, exactly
-roeh read §5               # or one section (the last one, if superseded)
+roeh map                   # fold the log into <trace>-map.md + -bloom.json
+roeh verify                # is the map fresh + the chain intact? (6 stale / 7 tamper)
+roeh scope "cascade"       # which REGIONS a query's tokens drill into, no false negatives
+roeh read cascade          # pull one region (a sub control plane), exactly
+roeh read <id>             # or one entry, with its live augments + conflicts (read-closure)
+roeh read §5               # or one section (the LAST one, if superseded)
 ```
 
-`roeh index` writes `<trace>-index.md`: every tagged entry as one line with its tag, line
-number, chapter and citation, plus a **supersessions and dead-ends** block up front —
-because an entry is only live if nothing later overturns it, and that is the list you
-check before quoting anything. On a real 3,058-line trace the index is ~480 lines. The
-Oracle reads *that* in full at any trace size, which preserves the global awareness a full
-read buys, then pulls only the chapters it needs.
+`roeh map` writes `<trace>-map.md`, the root **control plane**: a bounded digest of §0/§1/§5,
+one line per LIVE entry, and a **ledger** of supersessions, conflicts, dead-ends and
+uncertainties — because an entry is only live if nothing later overturns it, and that is the
+list you check before quoting anything. It is a *collapsing projection*: retired and settled
+regions collapse to headers and the whole thing is held under a token budget, so it stays a
+comfortable read at any trace size. The Oracle reads its preamble/live/ledger in full, then
+`roeh scope`s the question and `roeh read`s only the regions that matter. A per-region **bloom**
+(`-bloom.json`) makes the literal drill set mechanically complete: no region holding a matching
+token is ever missed.
 
-`roeh doctor` **fails** past the threshold if no index exists, and warns if the index is
-older than the trace. Both are the honest signal that the Oracle is about to answer from a
-partial view.
+`roeh verify` is the freshness gate — `6` if a projection input moved (regenerate with
+`roeh map`), `7` if the entry chain no longer recomputes (tamper). Freshness hashes the log
+*bytes*, so even an uncommitted append is correctly seen as stale. `roeh doctor` **fails** past
+the threshold if no map exists, and warns if the map is older than the trace — the honest
+signal that the Oracle is about to answer from a partial view.
 
-The index parser recognises both tag dialects — `- **[DECISION]**` and `` - `[DECISION]` ``
-— and ignores `[[wikilinks]]`. Recognising only one dialect under-reports without saying
-so, which for an index is the worst available failure: it looks complete.
+The parser recognises both tag dialects — `- **[DECISION]**` and `` - `[DECISION]` `` — and
+ignores `[[wikilinks]]`. Recognising only one dialect under-reports without saying so, which
+for a map is the worst available failure: it looks complete.
 
 ## Limitations — read before trusting it
 
