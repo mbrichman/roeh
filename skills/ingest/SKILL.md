@@ -215,12 +215,12 @@ The agents return v3 record-proposals; you do NOT append them raw. Collect them 
 **A v3 trace is a flat append-only log — NOT the legacy §0–§4 skeleton.** The derived *map*
 (`roeh map`) is the structure now: it regenerates the ledger, the liveness, and the topic
 regions from the log, so do not hand-scaffold a §1 principles digest (that lives in the
-profile, Phase 4), a §2 memory digest, §3 chapters, or a §4 staleness ledger. The v3 file is
-just: a short **§0 header** (what this is + "read via `roeh map`"), the **flat run of recorded
-entries**, and a **§5 RESUME STATE** at the end (what SessionStart reads). Append-only makes
-EOF the honest home for every entry; the map gives them their shape. *(This drops the legacy
-sectioned scaffold; `roeh doctor`'s required-section check and the skeleton template are
-updated in lockstep — see §0 adoption.)*
+profile, Phase 4), a §2 memory digest, §3 chapters, or a §4 staleness ledger. Start the trace
+from `${CLAUDE_PLUGIN_ROOT}/templates/decision-trace-v3.skeleton.md` — a short **§0 header**
+(what this is + "read via `roeh map`") and a **§5 RESUME STATE**; `roeh record` appends the
+**flat run of entries** after it, and a new §5 is appended when the resume state moves (readers
+take the LAST §5). Append-only makes EOF the honest home for every entry; the map gives them
+their shape. *(`roeh doctor` now requires only §0 + §5, so a flat v3 trace passes.)*
 
 ## Phase 4 — the profile
 

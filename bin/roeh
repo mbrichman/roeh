@@ -1105,7 +1105,11 @@ def plugin_version():
 # Sections the agents structurally depend on. The oracle's degradation ladder
 # reads §0/§1/§5 in full at ANY trace size and always reads the staleness
 # ledger, so their absence is not cosmetic — it silently removes the guarantee.
-REQUIRED_SECTIONS = ["0", "1", "3", "5"]
+# §0 (orientation) and §5 (resume state — read first after a compaction) are required of BOTH the
+# legacy §0–§5 layout AND a v3 flat-log trace. §1/§3/§4 are legacy-only: in a v3 trace the derived
+# `roeh map` holds the ledger/liveness/regions and the profile holds the principles digest, so they
+# are not hand-filled sections (impl-write-path §3 flat-log decision).
+REQUIRED_SECTIONS = ["0", "5"]
 
 
 def cmd_doctor(args):
@@ -1177,8 +1181,9 @@ def cmd_doctor(args):
         if absent:
             fail("trace is missing section(s) the agents depend on: "
                  + ", ".join("§" + s for s in absent),
-                 "the oracle reads §0/§1/§5 in full at any size; add the "
-                 "headings (append — never restructure the file)")
+                 "§0 (orientation) and §5 (resume state, read first after a "
+                 "compaction) are required in every trace; add the heading "
+                 "(append — never restructure the file)")
         else:
             ok("trace has all required sections")
 

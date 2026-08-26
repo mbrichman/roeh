@@ -907,15 +907,26 @@ class TestDoctor(RoehCase):
         self.assertIn("ingest complete", out)
 
     def test_detects_missing_required_sections(self):
-        """The oracle reads §0/§1/§5 in full at any trace size; their absence
-        silently removes that guarantee."""
+        """§0 and §5 are required of EVERY trace (legacy or v3) — §5 is what a
+        post-compaction session reads first; its absence silently removes that."""
         self.healthy()
         body = self.read("docs/decision-trace.md")
-        self.write("docs/decision-trace.md",
-                   body.replace("## §1", "## gone").replace("## §5", "## gone"))
+        self.write("docs/decision-trace.md", body.replace("## §5", "## gone"))
         code, out, _ = self.roeh("doctor")
         self.assertEqual(code, 1)
         self.assertIn("missing section", out)
+
+    def test_a_flat_v3_trace_passes_the_section_check(self):
+        """A v3 trace is a flat log — §0 + entries + §5, no hand-filled §1/§3/§4
+        (the map and profile hold what those sections used to). doctor must accept
+        it, or it would fail every v3 trace."""
+        self.healthy()
+        body = self.read("docs/decision-trace.md")
+        v3 = (body.replace("## §1", "## x1").replace("## §3", "## x3")
+                  .replace("## §4", "## x4"))
+        self.write("docs/decision-trace.md", v3)
+        _, out, _ = self.roeh("doctor")
+        self.assertNotIn("missing section", out)
 
     def test_detects_abandoned_ingest(self):
         self.init()
