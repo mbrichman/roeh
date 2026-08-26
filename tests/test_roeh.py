@@ -919,6 +919,27 @@ class TestReadPath(RoehCase):
         _, out, _ = self.roeh("scope", "storage")
         self.assertIn("sidecar (fresh)", out)
 
+    def test_scope_ignores_flag_values(self):
+        """A flag's value must not leak into the query — `scope "storage" --as-of D` once folded
+        the date token into the query and inflated the drill set (adversarial review)."""
+        self.seed()
+        self.roeh("map")
+        _, out, _ = self.roeh("scope", "storage", "--as-of", "2026-01-01")
+        self.assertIn("query tokens (≥3c): storage", out)
+        self.assertNotIn("2026", out.split("bloom source")[0])
+
+    def test_map_rejects_a_bad_budget(self):
+        self.seed()
+        code, _, err = self.roeh("map", "--budget", "notanint")
+        self.assertEqual(code, 1)
+        self.assertIn("--budget", err)
+
+    def test_map_rejects_a_bad_as_of(self):
+        self.seed()
+        code, _, err = self.roeh("map", "--as-of", "not-a-date")
+        self.assertEqual(code, 1)
+        self.assertIn("--as-of", err)
+
     def test_index_and_chapters_are_gone(self):
         """One live retrieval story: the superseded primitives must not resolve."""
         self.seed()

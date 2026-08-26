@@ -837,21 +837,43 @@ def _read_topic_map(cfg):
 
 def _repo_head(cfg):
     """Current repo HEAD — a projection-id input, because map generation consults git for cite
-    path-provenance (impl §2.0). '' when the repo has no git, so a non-repo project still maps."""
-    if os.path.isdir(os.path.join(cfg["repo_abs"], ".git")):
-        try:
-            return run(["git", "-C", cfg["repo_abs"], "rev-parse", "HEAD"]).strip()
-        except Exception:
-            return ""
-    return ""
+    path-provenance (impl §2.0). Ask `rev-parse` directly rather than probing for a `.git`
+    DIRECTORY, so a linked worktree or submodule (where `.git` is a FILE) is handled too; `run`
+    returns '' for a non-repo, so a non-git project still maps. map and verify call this
+    identically, so under-detection only under-ages the map — never a spurious freshness flip."""
+    return run(["git", "-C", cfg["repo_abs"], "rev-parse", "HEAD"])
+
+
+def _positional(args):
+    """The non-flag arguments — drops the known two-token flags (--budget/--dormancy/--as-of) AND
+    their values, so a flag's argument never leaks into a query or a selector (the bug where
+    `scope "auth" --as-of 2026-01-01` folded `2026` into the query and inflated the drill set)."""
+    twotoken = {"--budget", "--dormancy", "--as-of"}
+    out, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in twotoken:
+            skip = True
+        elif not a.startswith("--"):
+            out.append(a)
+    return out
 
 
 def _map_opts(args):
     """Shared projection knobs. Defaults match bin/roeh_map (budget 1500 tokens, dormancy 180d,
-    as-of today). They are part of the projection context, so `verify` reuses the STORED ones."""
-    return (int(opt_value(args, "--budget", 1500)),
-            int(opt_value(args, "--dormancy", 180)),
-            opt_value(args, "--as-of"))
+    as-of today). They are part of the projection context, so `verify` reuses the STORED ones. A
+    bad value is a usage error (exit 1), not a raw traceback or a silently-misclassifying map."""
+    def _int(flag, default):
+        v = opt_value(args, flag, default)
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            die(f"{flag} must be an integer, got {v!r}")
+    as_of = opt_value(args, "--as-of")
+    if as_of is not None and not re.match(r"^\d{4}-\d{2}-\d{2}$", as_of):
+        die(f"--as-of must be YYYY-MM-DD, got {as_of!r}")
+    return _int("--budget", 1500), _int("--dormancy", 180), as_of
 
 
 def cmd_map(args):
@@ -907,7 +929,8 @@ def cmd_read(args):
     trace = cfg["trace_abs"]
     if not os.path.exists(trace):
         die(f"no trace at {trace}")
-    if not args:
+    pos = _positional(args)
+    if not pos:
         die("usage: roeh read <region | region/N | <id> | §N | @ledger | group:N>")
     rm = _load_roeh_map()
     text = open(trace, encoding="utf-8").read()
@@ -921,7 +944,7 @@ def cmd_read(args):
             return True
         return os.path.exists(os.path.join(cfg["repo_abs"], path))
 
-    res = rm.read(text, args[0], D=D, as_of=(as_of or None),
+    res = rm.read(text, pos[0], D=D, as_of=(as_of or None),
                   budget_tokens=budget, resolve_cite=resolve_cite)
     print(res.rendered)
     if res.kind == "unreadable":
@@ -962,7 +985,7 @@ def cmd_scope(args):
     trace = cfg["trace_abs"]
     if not os.path.exists(trace):
         die(f"no trace at {trace}")
-    q = " ".join(a for a in args if not a.startswith("--"))
+    q = " ".join(_positional(args))
     if not q.strip():
         die('usage: roeh scope "<query>"')
     rm = _load_roeh_map()

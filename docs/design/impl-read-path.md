@@ -172,6 +172,11 @@ Reserve `0` ok / `1` usage-error / `2` precompact-block. New:
   with an **`UNVERIFIED`** / **`UNRESOLVED-PATH`** marker. The Oracle fails closed on the
   *claim* that needs the broken provenance — never on retrieval of an intact entry. (v1 conflated
   content-loss with provenance-loss, letting one stale path poison a whole region.)
+  **Adoption note (`d19a8e2`):** exit `5` is **reserved but not yet reachable** — the current
+  parser always recovers an entry's `.text`, so there is no byte-loss state to emit it, and the
+  CLI/core deliberately implement `0/4` only. Wire `5` when (and only when) a content-recovery
+  failure mode actually exists; until then the §6 `unreadable-vs-unverified` byte-loss case is
+  pending, not passing.
 - **`roeh verify`** → `0` fresh+intact; **`6`** stale (projection-id inputs moved); **`7`** tamper
   (chain break). On the read path (T0=6, integrity=7).
 - **`roeh scope "<Q>"`** → debug: seeds, lexical hits, bloom hits, mandatory drill set. `0`.
