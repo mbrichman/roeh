@@ -27,11 +27,23 @@ almost never *why*. This plugin builds the durable layer beneath all of that.
 | | What it does |
 |---|---|
 | **Ingestion** (`/roeh:ingest`) | Fans out reader agents over git history, memory files, docs and session transcripts — mining **inline comments and docstrings**, where the rationale actually lives — and assembles the trace. |
-| **The Oracle** (`oracle` agent) | Reads the record in full and answers "why", with citations. Escalates dead-ends and reversals. Says *"not recorded"* rather than inventing a rationale. Optionally a formal `VERDICT:` gate on changes. |
-| **The scribe** (`scribe` agent + PreCompact hook) | Writes what the work owes the record — automatically, at the moment compaction would otherwise discard it. |
+| **The Oracle** (`oracle` agent) | Reads the record — through a derived **map** and targeted reads once it outgrows a single pass — and answers "why", with citations. Escalates dead-ends and reversals. Says *"not recorded"* rather than inventing a rationale. Optionally a formal `VERDICT:` gate on changes. |
+| **The scribe** (`scribe` agent) | The record's **sole writer**: distils decisions from evidence (always naming what was rejected) and can append, never rewrite. It doesn't decide *when* to run — the operations below do. |
 
-Plus **reconciliation** (`/roeh:refresh`): folds in new commits, unmined transcripts and
-changed memory files, *and* checks whether what's already written is still true.
+**The scribe writes; the operations decide what it writes.** `/roeh:ingest` hands it the
+whole history at bootstrap; `/roeh:refresh` hands it what's happened *since* (new commits,
+unmined transcripts, changed memory files); the PreCompact gate hands it the current session
+before compaction discards it. These aren't alternatives to the scribe — they're the triggers
+that dispatch it, and it is the only thing that ever appends.
+
+What sets **`/roeh:refresh`** apart from the other two is its second half, the **drift
+check**. Ingest and the gate only ask *"what did this work decide?"* (forward: work →
+record). Refresh also asks *"is what we already wrote still true?"* (backward: record →
+world) — re-checking citations, comment-sourced entries and recorded numbers against the code
+as it is *now*, and handing the scribe a `[CORRECTION]`, `[REVERSAL]` or `[GOTCHA]` for each
+one that has moved. That backward pass is the harder, more valuable half, and it is why a
+record needs refreshing even when no new work has landed: code drifts out from under a
+citation that still looks valid.
 
 ## What ingest actually does
 
@@ -63,8 +75,8 @@ this way.
 
 That instruction — *"when you're looking at commits and diffs I want you to be sure to
 especially look at comments, that should contain a lot of the rationale"* — came from the
-owner of the project roeh was generalised from, and it turned out to be the single
-highest-yield instruction in the entire archaeology. Codebases carry their reasoning
+owner of the project roeh was generalised from, and it turned out to be one of the
+highest-yield instructions in the whole archaeology. Codebases carry their reasoning
 inline: the docstring that quotes a design ruling, the comment explaining why the obvious
 approach doesn't work, the `# NOTE:` above a guard that exists because of an outage
 nobody wrote up.
@@ -133,56 +145,48 @@ session-mining passes, all in parallel. Denser chapters mean higher fidelity, wh
 entire point; past ~8 the synthesis cost exceeds the marginal recall. A small repo
 collapses to a single sequential pass, and `--quick` forces it.
 
-Extraction agents run on `sonnet`, judgement runs on `opus` — see [Models](#models).
-Every agent carries a hard read-only-git guardrail, because an archaeology agent moving
+Extraction agents run on `sonnet`; session mining — the one judgement pass — inherits the
+session model (see [Models](#models)). Every agent carries a hard read-only-git guardrail, because an archaeology agent moving
 `HEAD` out from under live work is a mistake this lineage has already made once.
 
 The run declares its plan up front and marks units off as chapters land, so an ingest that
 dies partway is a recorded fact rather than a trace that merely *looks* finished. See
 [Running ingest twice](#running-ingest-twice).
 
-## How this differs from other memory tools
+## Design choices
 
-Persistent-memory tooling for coding agents is a crowded space, and much of it solves a
-genuinely different problem. Where roeh differs:
+Persistent memory for coding agents is a crowded space, and much of the work in it solves a
+genuinely different problem well. These are the choices roeh makes — described as choices,
+not claims to be first at any of them:
 
-**Retrospective, not prospective.** Most tools — [mem0](https://docs.mem0.ai/integrations/claude-code),
-[projectmem](https://github.com/riponcm/projectmem),
-[repomemory](https://github.com/DanielGuru/repomemory) — begin recording at install and
-accumulate forward. roeh's first act is to mine the history you already have.
-[Deciduous](https://deciduous.dev/) also builds from existing git history, so this is not
-unique — but it is uncommon.
+**Retrospective, not prospective.** A memory layer you install today tends to start
+recording today, and everything before that stays lost. roeh's first act is to mine the
+history you already have, so the record begins where the project did rather than where you
+happened to adopt a tool.
 
-**It reads the diff and the comments, not just the commit message.** This is the real
-difference, and [Lore](https://arxiv.org/abs/2603.15566) frames the shared problem well:
-*"Each commit captures a code diff but discards the reasoning behind it."* Lore's answer is
-to encode that reasoning into **future** commits, as structured git trailers — a good idea
-that requires everyone to start committing differently. roeh's answer points the other way:
-excavate the reasoning already sitting in **past** commits, in the diff body and the inline
-comments inside it, requiring no change to how anyone works. The two are complementary; a
-repo using Lore gives roeh richer messages to mine.
-
-I have not found another tool that treats docstrings and inline comments as a first-class
-rationale source. If one exists, that comparison should be corrected here.
+**It reads the diff and the comments, not just the commit message.** A commit subject says
+*what*; the reasoning more often sits in the diff body and the inline comments inside it.
+roeh excavates that, which needs no change to how anyone already works.
 
 **Provenance is enforced, not assumed.** Every claim carries a tag, a section and a SHA or
 `file:line`. "The record does not cover this" is a supported answer, and the Oracle is
-instructed to prefer it over a plausible reconstruction. Conversation-derived memory
-generally cannot distinguish *the user decided this* from *the assistant suggested this*;
-roeh's rule is that only the former counts.
+instructed to prefer it over a plausible reconstruction. The rule that only the owner's
+decisions count — not the assistant's suggestions — is structural, not a matter of trust.
 
-**Append-only, with supersession.** Most memory stores overwrite: a fact is updated in
-place. roeh never edits. A superseded decision gets a `[REVERSAL]` beside it and a wrong
-number gets a `[CORRECTION]`, so the record shows what was believed and when. The Oracle
-checks forward for supersession before quoting anything, because in an append-only file
-the wrong answer is still sitting there reading as true.
+**Append-only, with supersession.** roeh never edits in place. A superseded decision gets a
+`[REVERSAL]` beside it and a wrong number a `[CORRECTION]`, so the record shows what was
+believed and when. The Oracle checks forward for supersession before quoting anything,
+because in an append-only file the wrong answer is still sitting there reading as true.
 
 **One file a human can read.** The record is markdown in your repo, diffable in review and
-readable without the tool. Not a vector store, not a graph database, not a cloud service.
+readable without the tool — not a vector store, a graph database or a cloud service. Past a
+point it outgrows a single read, which is what the derived **map** and retrieval primitives
+are for (below).
 
-**What is not unique:** gating compaction. Other tools intercept `/compact` to force a save
-first, and that is the right instinct. roeh's variant blocks only manual compaction — never
-auto, where the window is already full and refusing can wedge the session.
+Some of this is common and some less so; the point is the combination, not any one part.
+Gating compaction to force a save, for instance, is a shared instinct — roeh's own take is
+to **not** block by default: it records what's owed and lets `/compact` proceed, because a
+gate people find irritating is a gate they learn to route around.
 
 ## Install
 
@@ -231,7 +235,7 @@ cd ~/projects/whatever && claude
 then:
 
 ```
-/roeh:init        # asks where the trace lives; writes config, skeleton, profile
+/roeh:init        # asks where the trace lives; writes the config
 /roeh:ingest      # builds the record from history — the expensive step
 ```
 
@@ -269,7 +273,8 @@ roeh doctor --fix    # apply the safe repairs
 
 `doctor` checks the config schema version against the plugin, flags missing and
 unrecognised keys, verifies the trace still has §0/§1/§3/§5 and a staleness ledger,
-warns when the trace has passed the Oracle's full-read threshold, notices a profile
+fails when the trace has outgrown a single read but has no **map** and warns when the map
+has fallen behind it, notices a profile
 drifting behind the trace, and catches two placement mistakes worth catching: a
 `repo`-mode trace that is not actually tracked by git (append-only is then a promise,
 not a property), and a `local`-mode trace sitting **inside** the repo, where one
@@ -320,29 +325,30 @@ ways it could quietly start lying:
 
 ## Models
 
-Deliberate, and split along one line: **judgement is pinned, extraction is cheap.**
+The two agents are pinned so an org default can't silently swap them; the fan-out
+extraction runs cheap.
 
 | Component | Model | Why |
 |---|---|---|
-| `oracle` | **`opus`** (pinned) | Its two hardest jobs fail *quietly*: noticing a later `[REVERSAL]` supersedes the entry it is about to quote, and refusing to supply a rationale the record does not contain. A gate that fails softly is worse than no gate. |
-| `scribe` | **`opus`** (pinned) | Dispatched unattended by the pre-compaction gate, writing to a file that cannot be cleaned up. A fabricated rationale is permanent — only supersedable, after the Oracle has already cited it. |
+| `oracle` | **`sonnet`** (pinned) | Its two hardest jobs fail *quietly*: noticing a later `[REVERSAL]` supersedes the entry it is about to quote, and refusing to supply a rationale the record does not contain. Pinned so an org default can't downgrade it without that showing in the output; Sonnet was judged sufficient here against Opus's cost and latency. |
+| `scribe` | **`sonnet`** (pinned) | Dispatched unattended by the pre-compaction gate, writing to a file that cannot be cleaned up — a fabricated rationale is permanent, only supersedable. Pinned for the same reason as the oracle, and judged sufficient against the cost. |
 | ingest chapter / memory / artifact passes | `sonnet` | Bounded extraction. The source text does the reasoning; the agent transcribes and cites it. The original archaeology ran six Sonnet agents and produced the trace this generalises. |
-| ingest & refresh session mining | *inherits* | The one pass needing real judgement — what is *net-new* against a full trace, and the hall-of-mirrors rule on interleaved turns. |
+| ingest & refresh session mining | *inherits* | The one pass needing real judgement — what is *net-new* against a full trace, and the hall-of-mirrors rule on interleaved turns. Run the session on your strongest model when this matters. |
 | refresh drift check | *inherits* | "Is this recorded claim still true" is judgement against evidence, not retrieval. |
 
-The two agents are pinned by **alias**, not version, so they track the current Opus.
+The two agents are pinned by **alias**, not version, so they track the current Sonnet.
 
 > **If your org pins Claude to a smaller model by default**, that is exactly why these
 > two are pinned rather than inheriting — otherwise the Oracle and scribe are silently
 > downgraded and you cannot tell from their output. If your org *restricts* rather than
-> defaults, the pin will fail to resolve and the agents fall back; check that before
+> defaults, the pin may fail to resolve and the agents fall back; check that before
 > relying on a `VERDICT:` as a gate.
 
 ## Hooks
 
 | Event | Behaviour |
 |---|---|
-| `PreCompact` *(manual)* | Dispatches the scribe in RECORD mode to write what's owed. Blocks compaction (`exit 2`) if the record is still behind — you typed `/compact`, so there is room to record first. Bypass with `ROEH_SKIP=1`. |
+| `PreCompact` *(manual)* | Dispatches the scribe in RECORD mode to write what's owed, then lets compaction proceed — no interruption (the default). Opt into a hard block on a still-behind record with `precompact.block_manual: true` (`exit 2`); `ROEH_SKIP=1` bypasses that block. |
 | `PreCompact` *(auto)* | Never blocks. Auto-compact fires when the window is already full; refusing it there can wedge the session. Injects a loud, evidence-bearing reminder instead. |
 | `SessionStart` *(compact/clear/fork)* | Re-injects the trace pointer and **§5 RESUME STATE** verbatim. This is the half that makes an append-only record *work* — writing it is pointless if nothing reads it back. |
 | `SessionStart` *(startup/resume)* | Cheap staleness line, plus the standing instruction to consult the oracle before re-deriving anything. |
@@ -383,7 +389,9 @@ roeh read <region | id | §N>         pull one control plane or entry, exactly
 roeh scope "<query>"                 the regions a query's tokens drill into
 roeh verify                          map freshness + chain integrity (6 stale / 7 tamper)
 
-roeh append [file|-]                 APPEND to the trace (the only write path)
+roeh record [-]                      APPEND one structured entry (JSON on stdin): id + edges + chain
+roeh id [-]                          compute an entry's content-id, without writing
+roeh append [file|-]                 APPEND raw text — the low-level write primitive
 roeh sessions [--unmined]            this project's transcripts
 roeh mark <session-id>               record a transcript as folded in
 roeh ingest status|begin|done|end|abandon
@@ -442,17 +450,18 @@ invariant method.
 
 Two tiers, split by what they cost.
 
-**Deterministic** — the CLI and the hooks. Free, fast, no model. Run on every commit and
-in CI on Linux and macOS:
+**Deterministic** — the CLI, the hooks, and the read-path core. Free, fast, no model. Run
+on every commit and in CI on Linux and macOS:
 
 ```bash
 tests/run                                  # suite + manifest validation
 python3 -m unittest discover -s tests -v
 ```
 
-62 cases covering slug computation, init and its refusals, status, append, the
-pre-compaction sentinel, the ingest lifecycle, `doctor`, both hooks, and structural
-checks on the shipped manifests. Tests drive the CLI as a **subprocess**, because the
+200 cases covering slug computation, init and its refusals, status, append and structured
+`record`, the pre-compaction sentinel, the ingest lifecycle, `doctor`, both hooks, the
+`map`/`read`/`scope`/`verify` read path, and structural checks on the shipped manifests.
+Tests drive the CLI as a **subprocess**, because the
 exit code *is* the contract — `PreCompact` blocking compaction is `exit 2` and nothing
 else, and a test that imported the module would pass while the real integration was
 broken.
@@ -562,8 +571,8 @@ evidence. Where it can mislead:
 
 - **The full read is on a clock.** Past roughly 1,500 lines or 400KB the record no longer
   fits one read. See [What happens when the trace outgrows a single
-  read](#what-happens-when-the-trace-outgrows-a-single-read) — the Oracle falls back to the
-  index, not to grepping, and `roeh doctor` fails if the index is missing.
+  read](#what-happens-when-the-trace-outgrows-a-single-read) — the Oracle reads through the
+  **map** and targeted reads, not by grepping, and `roeh doctor` fails if the map is missing.
 
 - **A first ingest on a large history costs real money.** Extraction runs on `sonnet` to
   keep it sane, but a year of commits is still a fan-out. `--quick` exists for a cheap
