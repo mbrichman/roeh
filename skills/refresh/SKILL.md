@@ -100,8 +100,11 @@ entry:
 - `[GOTCHA]` for a citation that no longer resolves
 
 **Never edit the original entry.** The record shows what was believed and when; that
-history is the point, not noise to tidy away. The scribe appends via `roeh append`, which
-cannot rewrite — and is the *only* writer, which is why the routing above is not optional.
+history is the point, not noise to tidy away. The scribe records each finding via `roeh
+record` (structured + indexed, so the map serves it — a finding `roeh append`ed raw has no
+id and stays invisible to the map; the §5 block alone goes in with `roeh append`). `roeh
+record` cannot rewrite — and the scribe is the *only* writer, which is why the routing
+above is not optional.
 
 ## Phase 4 — refresh the profile
 

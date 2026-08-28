@@ -1395,6 +1395,23 @@ class TestManifests(unittest.TestCase):
         for tool in ("Write", "Edit"):
             self.assertIn(tool, head.split("disallowedTools")[1].split("\n")[0])
 
+    def test_scribe_records_entries_via_roeh_record(self):
+        """Entries are written with `roeh record` (content id + typed edges + chain), so the map
+        INDEXES them — NOT hand-authored `roeh append`, which lands an entry raw and unindexed.
+        Regression: the scribe/refresh charters were left on the pre-v3 `roeh append` while only
+        the ingest moved to `roeh record`, so every post-ingest entry silently escaped the map and
+        the bounded read eroded back to a raw tail (found dogfooding a v3 trace in production)."""
+        with open(os.path.join(ROOT, "agents", "scribe.md")) as f:
+            scribe = f.read()
+        with open(os.path.join(ROOT, "skills", "refresh", "SKILL.md")) as f:
+            refresh = f.read()
+        scribe_flat = " ".join(scribe.split())       # tolerate line-wrapping of `roeh record`
+        refresh_flat = " ".join(refresh.split())
+        self.assertIn("roeh record", scribe_flat, "scribe must write entries via `roeh record`")
+        self.assertIn("roeh record", refresh_flat, "refresh must record findings via `roeh record`")
+        self.assertNotIn("roeh append <<'ENTRY'", scribe_flat,
+                         "scribe must not hand-author entries via raw `roeh append` — they land unindexed")
+
     def test_bin_scripts_are_executable(self):
         for name in ("roeh", "roeh-precompact", "roeh-sessionstart"):
             p = os.path.join(BIN, name)
