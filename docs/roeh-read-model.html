@@ -1,0 +1,334 @@
+<style>
+  :root{
+    --bg:#eef1f5; --surface:#ffffff; --surface-2:#f4f7fa; --ink:#141922; --muted:#586574;
+    --line:#dbe2ea; --line-strong:#c4ced9;
+    --trace:#a9741f; --map:#0c877e; --bloom:#6a53c9;
+    --trace-soft:#f4ead6; --map-soft:#d9f0ed; --bloom-soft:#e7e2f8;
+    --accent:#0c877e; --ok:#1c7a48; --bad:#bb3f38;
+    --mono-bg:#f1f4f7; --shadow:0 1px 2px rgba(20,25,34,.05),0 8px 28px rgba(20,25,34,.06);
+    --radius:14px;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:"SF Mono","JetBrains Mono","Fira Code",ui-monospace,"Cascadia Code",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0c0f14; --surface:#141a22; --surface-2:#1a212b; --ink:#e7ebf1; --muted:#94a1b1;
+      --line:#26303b; --line-strong:#33414f;
+      --trace:#e2a24f; --map:#33c9bd; --bloom:#9c8cf2;
+      --trace-soft:#2c2417; --map-soft:#0f2b2a; --bloom-soft:#211d33;
+      --accent:#33c9bd; --ok:#48c483; --bad:#e46a62;
+      --mono-bg:#1a212b; --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 34px rgba(0,0,0,.34);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#eef1f5; --surface:#ffffff; --surface-2:#f4f7fa; --ink:#141922; --muted:#586574;
+    --line:#dbe2ea; --line-strong:#c4ced9;
+    --trace:#a9741f; --map:#0c877e; --bloom:#6a53c9;
+    --trace-soft:#f4ead6; --map-soft:#d9f0ed; --bloom-soft:#e7e2f8;
+    --accent:#0c877e; --ok:#1c7a48; --bad:#bb3f38; --mono-bg:#f1f4f7;
+    --shadow:0 1px 2px rgba(20,25,34,.05),0 8px 28px rgba(20,25,34,.06);
+  }
+  :root[data-theme="dark"]{
+    --bg:#0c0f14; --surface:#141a22; --surface-2:#1a212b; --ink:#e7ebf1; --muted:#94a1b1;
+    --line:#26303b; --line-strong:#33414f;
+    --trace:#e2a24f; --map:#33c9bd; --bloom:#9c8cf2;
+    --trace-soft:#2c2417; --map-soft:#0f2b2a; --bloom-soft:#211d33;
+    --accent:#33c9bd; --ok:#48c483; --bad:#e46a62; --mono-bg:#1a212b;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 34px rgba(0,0,0,.34);
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.6;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  .wrap{max-width:960px;margin:0 auto;padding:clamp(28px,5vw,68px) clamp(18px,4vw,32px)}
+  h1,h2,h3{text-wrap:balance;line-height:1.15;margin:0}
+  p{margin:0}
+  code,.mono{font-family:var(--mono)}
+  .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--accent);font-weight:600}
+  a{color:var(--accent)}
+
+  /* header */
+  header{margin-bottom:40px}
+  h1{font-size:clamp(1.9rem,4.4vw,2.7rem);font-weight:700;letter-spacing:-.02em;margin:14px 0 14px}
+  .stand{font-size:clamp(1.02rem,2.2vw,1.18rem);color:var(--muted);max-width:60ch}
+  .stand b{color:var(--ink);font-weight:600}
+
+  /* legend */
+  .legend{display:flex;flex-wrap:wrap;gap:10px 20px;margin:26px 0 0;padding:14px 16px;
+    background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+  .legend .li{display:flex;align-items:baseline;gap:9px;font-size:.9rem}
+  .dot{width:11px;height:11px;border-radius:50%;flex:none;translate:0 1px}
+  .li .nm{font-family:var(--mono);font-weight:600}
+  .li .rl{color:var(--muted)}
+  .dot.trace{background:var(--trace)} .dot.map{background:var(--map)} .dot.bloom{background:var(--bloom)}
+
+  section{margin-top:52px}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:20px}
+  .sec-head .n{font-family:var(--mono);font-size:.8rem;color:var(--muted);font-weight:600;
+    border:1px solid var(--line-strong);border-radius:6px;padding:2px 8px;flex:none}
+  h2{font-size:clamp(1.25rem,2.8vw,1.55rem);font-weight:680;letter-spacing:-.01em}
+
+  /* ---- panel 1: the three files ---- */
+  .files{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+  .file{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:18px 18px 16px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .file::before{content:"";position:absolute;inset:0 auto 0 0;width:4px}
+  .file.trace::before{background:var(--trace)} .file.map::before{background:var(--map)} .file.bloom::before{background:var(--bloom)}
+  .file .fn{font-family:var(--mono);font-size:.82rem;font-weight:600;word-break:break-word}
+  .file .role{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;font-weight:700;margin-top:10px}
+  .file.trace .role{color:var(--trace)} .file.map .role{color:var(--map)} .file.bloom .role{color:var(--bloom)}
+  .file .desc{font-size:.92rem;color:var(--muted);margin-top:6px}
+  .file ul{margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+  .file li{font-size:.85rem;padding-left:16px;position:relative}
+  .file li::before{content:"";position:absolute;left:0;top:.62em;width:6px;height:6px;border-radius:2px;background:var(--line-strong)}
+  .authority{margin-top:12px;font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--trace)}
+
+  .derive{display:flex;align-items:center;gap:12px;justify-content:center;flex-wrap:wrap;
+    margin-top:18px;padding:14px 16px;background:var(--surface-2);border:1px dashed var(--line-strong);
+    border-radius:12px;font-size:.92rem;color:var(--muted);text-align:center}
+  .derive code{background:var(--mono-bg);padding:2px 7px;border-radius:6px;color:var(--ink);font-size:.86em}
+  .derive b{color:var(--ink)}
+
+  /* size-at-a-glance */
+  .sizes{margin-top:16px;background:var(--surface);border:1px solid var(--line);border-radius:12px;
+    padding:16px 18px;box-shadow:var(--shadow)}
+  .sizes .cap{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:12px}
+  .bar{display:grid;grid-template-columns:74px 1fr 68px;align-items:center;gap:12px;margin:9px 0}
+  .bar .lbl{font-family:var(--mono);font-size:.8rem;font-weight:600}
+  .bar .track{height:16px;background:var(--surface-2);border-radius:5px;overflow:hidden}
+  .bar .fill{height:100%;border-radius:5px}
+  .bar .val{font-family:var(--mono);font-size:.78rem;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+  .fill.trace{background:var(--trace)} .fill.map{background:var(--map)} .fill.bloom{background:var(--bloom)}
+  .sizes .note{font-size:.85rem;color:var(--muted);margin-top:12px}
+  .sizes .note b{color:var(--ink)}
+
+  /* ---- panel 2: the read walk ---- */
+  .q{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:12px;padding:16px 18px;box-shadow:var(--shadow);margin-bottom:8px}
+  .q .k{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .q .t{font-size:1.12rem;font-weight:600;margin-top:5px}
+
+  .walk{display:flex;flex-direction:column;gap:0;margin-top:8px}
+  .step{display:grid;grid-template-columns:44px 1fr;gap:18px;position:relative;padding:20px 0}
+  .step:not(:last-child)::after{content:"";position:absolute;left:21px;top:44px;bottom:-4px;width:2px;background:var(--line)}
+  .step .badge{width:44px;height:44px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+    font-family:var(--mono);font-weight:700;font-size:1rem;background:var(--surface);border:1px solid var(--line-strong);
+    color:var(--ink);z-index:1;box-shadow:var(--shadow)}
+  .step .body{min-width:0}
+  .cmd{font-family:var(--mono);font-size:.9rem;background:var(--mono-bg);border:1px solid var(--line);
+    border-radius:7px;padding:4px 9px;display:inline-block;font-weight:600}
+  .touch{display:inline-flex;align-items:center;gap:6px;font-size:.74rem;font-weight:600;
+    padding:3px 9px;border-radius:20px;margin-left:8px;letter-spacing:.02em;vertical-align:middle}
+  .touch .d{width:8px;height:8px;border-radius:50%}
+  .touch.trace{background:var(--trace-soft);color:var(--trace)} .touch.trace .d{background:var(--trace)}
+  .touch.map{background:var(--map-soft);color:var(--map)} .touch.map .d{background:var(--map)}
+  .touch.bloom{background:var(--bloom-soft);color:var(--bloom)} .touch.bloom .d{background:var(--bloom)}
+  .step h3{font-size:1.02rem;font-weight:640;margin:12px 0 5px}
+  .step p{font-size:.94rem;color:var(--muted)}
+  .step p b{color:var(--ink);font-weight:600}
+  .out{margin-top:10px;font-size:.88rem;background:var(--surface-2);border:1px solid var(--line);
+    border-radius:9px;padding:9px 12px;display:flex;gap:9px;align-items:baseline}
+  .out .arw{color:var(--accent);font-weight:700;flex:none;font-family:var(--mono)}
+  .out b{color:var(--ink)}
+
+  .answer{margin-top:8px;background:linear-gradient(0deg,var(--map-soft),var(--map-soft));
+    border:1px solid var(--map);border-radius:12px;padding:16px 18px}
+  .answer .k{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--map);font-weight:700}
+  .answer .t{font-size:1.02rem;margin-top:5px}
+  .answer .t b{font-weight:680}
+
+  /* scope meter */
+  .meter{display:flex;align-items:stretch;gap:0;margin:20px 0 4px;flex-wrap:wrap}
+  .meter .m{flex:1;min-width:120px;padding:12px 14px;border:1px solid var(--line);background:var(--surface);
+    position:relative;box-shadow:var(--shadow)}
+  .meter .m:first-child{border-radius:12px 0 0 12px}
+  .meter .m:last-child{border-radius:0 12px 12px 0;background:var(--surface-2)}
+  .meter .m:not(:last-child)::after{content:"›";position:absolute;right:-8px;top:50%;translate:0 -50%;
+    color:var(--muted);font-weight:700;z-index:2;font-size:1.1rem;background:var(--bg);padding:0 1px}
+  .meter .big{font-family:var(--mono);font-size:1.12rem;font-weight:700;font-variant-numeric:tabular-nums}
+  .meter .sm{font-size:.74rem;color:var(--muted);margin-top:2px}
+  .meter .m.hero .big{color:var(--map)}
+
+  /* ---- panel 3: comparison ---- */
+  .cmp{display:flex;flex-direction:column;gap:12px}
+  .row{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:start;background:var(--surface);
+    border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow)}
+  .row .mark{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+    font-weight:800;font-size:1rem;flex:none}
+  .row.no .mark{background:var(--bad);color:#fff} .row.yes .mark{background:var(--ok);color:#fff}
+  .row .h{font-weight:640;font-size:1rem}
+  .row .h code{font-size:.86em;background:var(--mono-bg);padding:1px 6px;border-radius:5px}
+  .row .d{font-size:.92rem;color:var(--muted);margin-top:4px}
+  .row .d b{color:var(--ink)}
+
+  footer{margin-top:52px;padding-top:22px;border-top:1px solid var(--line);font-size:.9rem;color:var(--muted)}
+  footer code{background:var(--mono-bg);padding:1px 6px;border-radius:5px;font-size:.86em;color:var(--ink)}
+
+  @media (max-width:640px){
+    .files{grid-template-columns:1fr}
+    .bar{grid-template-columns:64px 1fr 58px}
+    .meter .m:not(:last-child)::after{display:none}
+    .meter .m{border-radius:12px !important}
+  }
+  @media (prefers-reduced-motion:no-preference){
+    .reveal{opacity:0;transform:translateY(10px);animation:rise .6s cubic-bezier(.2,.7,.3,1) forwards}
+    .step:nth-child(1){animation-delay:.02s}
+    @keyframes rise{to{opacity:1;transform:none}}
+  }
+</style>
+
+<div class="wrap">
+  <header class="reveal">
+    <div class="eyebrow">roeh · the read model</div>
+    <h1>Trace, map &amp; bloom — how a decision record answers a question</h1>
+    <p class="stand">Three files, one job: answer <b>“why did we decide X, and is it still true?”</b> without reading a 200&nbsp;KB log — and without a keyword search silently missing the entry that <b>overturned</b> the one you found.</p>
+
+    <div class="legend">
+      <span class="li"><span class="dot trace"></span><span class="nm">decision-trace.md</span><span class="rl">— the authority</span></span>
+      <span class="li"><span class="dot map"></span><span class="nm">…-map.md</span><span class="rl">— the live index</span></span>
+      <span class="li"><span class="dot bloom"></span><span class="nm">…-bloom.json</span><span class="rl">— the no-miss filter</span></span>
+    </div>
+  </header>
+
+  <!-- PANEL 1 -->
+  <section>
+    <div class="sec-head"><span class="n">1</span><h2>Where the three come from</h2></div>
+    <div class="files">
+      <article class="file trace">
+        <div class="fn">decision-trace.md</div>
+        <div class="role">The authority</div>
+        <div class="desc">The append-only log. Every entry ever written, in order — the single source of truth.</div>
+        <ul>
+          <li>Only ever grows</li>
+          <li>Keeps superseded entries ([REVERSAL], [CORRECTION])</li>
+          <li>Too big to read whole past ~400&nbsp;KB</li>
+        </ul>
+        <div class="authority">◆ everything else is derived from this</div>
+      </article>
+      <article class="file map">
+        <div class="fn">…-map.md</div>
+        <div class="role">The live index</div>
+        <div class="desc">A collapsing projection held to a token budget — “what’s true now,” not the whole history.</div>
+        <ul>
+          <li>One line per <b>live</b> entry</li>
+          <li>A ledger of reversals, conflicts, dead-ends</li>
+          <li>Retired regions collapse to headers</li>
+        </ul>
+      </article>
+      <article class="file bloom">
+        <div class="fn">…-bloom.json</div>
+        <div class="role">The no-miss filter</div>
+        <div class="desc">A per-region filter over literal words — so summarizing into the map can never lose a lookup.</div>
+        <ul>
+          <li>“Which regions contain word X?”</li>
+          <li><b>No false negatives</b> — never skips a match</li>
+          <li>Bigger than the map: it indexes every token</li>
+        </ul>
+      </article>
+    </div>
+
+    <div class="derive">
+      <b style="color:var(--trace)">trace</b> &nbsp;—&nbsp; <code>roeh map</code> &nbsp;—▶&nbsp; regenerates &nbsp;<b style="color:var(--map)">map</b>&nbsp; + &nbsp;<b style="color:var(--bloom)">bloom</b>&nbsp;·&nbsp; both are a disposable, gitignored cache — blow them away and rebuild from the trace anytime
+    </div>
+
+    <div class="sizes">
+      <div class="cap">Same record, three sizes — this is the whole point</div>
+      <div class="bar"><span class="lbl" style="color:var(--trace)">trace</span><span class="track"><span class="fill trace" style="width:100%"></span></span><span class="val">197 KB</span></div>
+      <div class="bar"><span class="lbl" style="color:var(--bloom)">bloom</span><span class="track"><span class="fill bloom" style="width:22%"></span></span><span class="val">44 KB</span></div>
+      <div class="bar"><span class="lbl" style="color:var(--map)">map</span><span class="track"><span class="fill map" style="width:3%"></span></span><span class="val">6 KB</span></div>
+      <p class="note">The Oracle reads the <b>6&nbsp;KB map</b>, not the 197&nbsp;KB trace — and still can’t miss a relevant entry, because the <b>bloom</b> decides what to pull, not a summary’s judgment. (Figures from a representative live trace.)</p>
+    </div>
+  </section>
+
+  <!-- PANEL 2 -->
+  <section>
+    <div class="sec-head"><span class="n">2</span><h2>One question, four steps</h2></div>
+
+    <div class="q">
+      <div class="k">The question</div>
+      <div class="t">“Do we still block a manual <code style="font-family:var(--mono)">/compact</code>?”</div>
+    </div>
+    <p style="color:var(--muted);font-size:.92rem;margin:8px 2px 0">A plain keyword search is a trap here: the record holds an <em>old</em> decision (“manual blocks, exit 2”) that was later <b style="color:var(--ink)">reversed</b>. Grep finds the old one and reads it as current. Here’s how the three files avoid that:</p>
+
+    <div class="walk">
+      <div class="step">
+        <div class="badge">1</div>
+        <div class="body">
+          <span class="cmd">roeh verify</span><span class="touch map"><span class="d"></span>map</span><span class="touch trace"><span class="d"></span>trace</span>
+          <h3>Is the map current?</h3>
+          <p>Hashes the log’s <b>bytes</b> — even an uncommitted append counts. If the map has fallen behind the trace, stop and rebuild with <code>roeh map</code>. <b>You never read from a stale summary.</b></p>
+          <div class="out"><span class="arw">→</span><span><b>fresh + intact</b> — proceed</span></div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="badge">2</div>
+        <div class="body">
+          <span class="cmd">read the map</span><span class="touch map"><span class="d"></span>map</span>
+          <h3>What’s live, and what got overturned?</h3>
+          <p>The map lists only <b>live</b> entries plus a ledger of reversals. It shows the current stance <i>and</i> flags that an earlier decision on this was superseded — the thing grep can’t know.</p>
+          <div class="out"><span class="arw">6 KB</span><span>read instead of 197 KB — and the ledger says “this area has a [REVERSAL]”</span></div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="badge">3</div>
+        <div class="body">
+          <span class="cmd">roeh scope "block manual compact"</span><span class="touch bloom"><span class="d"></span>bloom</span>
+          <h3>Which regions could hold the answer?</h3>
+          <p>Tokenizes the question and asks each region’s bloom. It returns every region that could match — <b>with no misses</b>: both the region with the original decision <i>and</i> the region with its reversal.</p>
+          <div class="out"><span class="arw">→</span><span>regions <b>R2</b> (original) + <b>R7</b> (reversal) — 2 of many</span></div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="badge">4</div>
+        <div class="body">
+          <span class="cmd">roeh read R2 R7</span><span class="touch trace"><span class="d"></span>trace</span>
+          <h3>Pull just those slices, full text</h3>
+          <p>Reads only those regions from the trace, at full fidelity, with <b>read-closure</b> — an entry arrives together with the reversal that supersedes it, so you can’t quote the dead one by accident.</p>
+          <div class="out"><span class="arw">→</span><span>the exact entries + their supersession, cited</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="answer">
+      <div class="k">The live answer</div>
+      <div class="t"><b>No — non-blocking by default</b> since the 2026-08-25 reversal; the <code style="font-family:var(--mono)">exit&nbsp;2</code> block survives only as opt-in. Grep would have answered “yes.”</div>
+    </div>
+
+    <div class="meter">
+      <div class="m"><div class="big">197 KB</div><div class="sm">whole trace</div></div>
+      <div class="m"><div class="big">6 KB</div><div class="sm">map you read</div></div>
+      <div class="m"><div class="big">2</div><div class="sm">regions drilled</div></div>
+      <div class="m hero"><div class="big">1</div><div class="sm">live answer</div></div>
+    </div>
+  </section>
+
+  <!-- PANEL 3 -->
+  <section>
+    <div class="sec-head"><span class="n">3</span><h2>Why not the two obvious shortcuts</h2></div>
+    <div class="cmp">
+      <div class="row no">
+        <div class="mark">✕</div>
+        <div><div class="h">Read the whole trace</div>
+          <div class="d">Fine at first, impossible later. Past ~400&nbsp;KB it blows the budget, and it’s mostly <b>superseded sediment</b> — old decisions, reversed §5 blocks — that buries the live answer.</div></div>
+      </div>
+      <div class="row no">
+        <div class="mark">✕</div>
+        <div><div class="h"><code>grep</code> the trace</div>
+          <div class="d">Cheap, and <b>silently wrong</b>. You can’t search for what you don’t know to look for, and a keyword hit on the <b>original</b> decision reads exactly like a hit on the live one — the reversal two chapters down never surfaces.</div></div>
+      </div>
+      <div class="row yes">
+        <div class="mark">✓</div>
+        <div><div class="h">map + bloom + trace</div>
+          <div class="d"><b style="color:var(--map)">map</b> gives the live picture in a tiny read · <b style="color:var(--bloom)">bloom</b> guarantees every region that could match gets drilled · <b style="color:var(--trace)">trace</b> supplies the exact text on demand. Small read, no misses, full fidelity — and <code>roeh verify</code> makes sure you’re never reading a stale view.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p><b>In one line:</b> the <b style="color:var(--trace)">trace</b> is the truth (too big to read whole), the <b style="color:var(--map)">map</b> is the live index you actually read, and the <b style="color:var(--bloom)">bloom</b> is the safety net that makes summarizing into the map safe. A read walks <code>verify → map → scope (bloom) → read (trace)</code>.</p>
+  </footer>
+</div>
