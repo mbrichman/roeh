@@ -381,6 +381,46 @@ class TestStatus(RoehCase):
                               env={"CLAUDE_SESSION_ID": "live"})
         self.assertFalse(json.loads(out)["behind"])
 
+    def test_mark_survives_an_mtime_only_touch(self):
+        """A mined session must STAY mined when only its mtime moves — a cloud-sync
+        rewrite, a backup/restore, reopening it — with the content byte-for-byte
+        unchanged. Regression: the predicate compared mtime, so a sync bumping mtime
+        silently un-mined byte-identical transcripts and made refresh re-mine them."""
+        self.init()
+        self.make_trace()
+        p = self.make_session("earlier")
+        self.roeh("mark", "earlier")
+        future = os.path.getmtime(p) + 7 * 3600          # size unchanged, mtime +7h
+        os.utime(p, (future, future))
+        _, out, _ = self.roeh("status", "--json")
+        self.assertEqual(json.loads(out)["unmined_sessions"], [],
+                         "an mtime-only touch must not un-mine a session")
+
+    def test_mark_goes_stale_when_the_transcript_grows(self):
+        """But real new content (the file GROWS) must un-mine it — that is the whole
+        point of marking incrementally, and size is what tells the two apart."""
+        self.init()
+        self.make_trace()
+        p = self.make_session("earlier")
+        self.roeh("mark", "earlier")
+        with open(p, "a") as f:
+            f.write('{"type":"user"}\n')                 # a genuine new turn
+        _, out, _ = self.roeh("status", "--json")
+        self.assertEqual([x["id"] for x in json.loads(out)["unmined_sessions"]],
+                         ["earlier"], "a grown transcript must re-count as unmined")
+
+    def test_sessions_command_uses_the_same_size_predicate(self):
+        """`roeh sessions` shares `_is_mined`, so an mtime-only touch leaves it 'mined'."""
+        self.init()
+        self.make_trace()
+        p = self.make_session("earlier")
+        self.roeh("mark", "earlier")
+        future = os.path.getmtime(p) + 7 * 3600
+        os.utime(p, (future, future))
+        _, out, _ = self.roeh("sessions", "--json")
+        row = [r for r in json.loads(out) if r["id"] == "earlier"][0]
+        self.assertEqual(row["state"], "mined")
+
 
 class TestAppend(RoehCase):
     """append is the ONLY write path to the record, and must be incapable of

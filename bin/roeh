@@ -241,6 +241,21 @@ def sessions_for(cfg):
     return sorted(out, key=lambda s: s["mtime"], reverse=True)
 
 
+def _is_mined(s, mined):
+    """A session is mined iff its transcript's SIZE is unchanged since the mark.
+
+    Transcripts only ever grow, so an equal size means no new content since the
+    mark. mtime is deliberately NOT used: it advances on any filesystem touch — a
+    cloud-sync rewrite, a backup/restore, reopening the session — which would
+    silently un-mine a byte-identical transcript and make the next refresh re-mine
+    it for nothing. `cmd_mark` records both mtime and size; only size is trusted.
+    (Measured dogfooding: a sync bumped a batch of transcripts' mtimes +7h with
+    Delta-size 0, falsely flagging five already-mined sessions as unmined.)
+    """
+    m = mined.get(s["id"])
+    return m is not None and m.get("size") == s["size"]
+
+
 def status(cfg, active_session=None):
     st = load_state(cfg)
     exists = os.path.exists(cfg["trace_abs"])
@@ -282,9 +297,7 @@ def status(cfg, active_session=None):
     # which wedged /compact on the very session doing the compacting.
     mined = st.get("mined_sessions", {})
     unmined = [s for s in sessions_for(cfg)
-               if s["id"] != active_session
-               and (s["id"] not in mined
-                    or mined[s["id"]].get("mtime", 0) < s["mtime"])]
+               if s["id"] != active_session and not _is_mined(s, mined)]
 
     # A memory directory is optional — plenty of projects have none.
     mem_dir = os.path.join(os.path.expanduser("~/.claude/projects"),
@@ -784,8 +797,7 @@ def cmd_sessions(args):
     only_unmined = "--unmined" in args
     rows = []
     for s in sessions_for(cfg):
-        is_mined = (s["id"] in mined
-                    and mined[s["id"]].get("mtime", 0) >= s["mtime"])
+        is_mined = _is_mined(s, mined)
         if only_unmined and is_mined:
             continue
         rows.append((s["id"], s["size"], "mined" if is_mined else "UNMINED",
