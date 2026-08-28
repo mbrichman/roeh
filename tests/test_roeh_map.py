@@ -353,6 +353,28 @@ class Step3Bloom(unittest.TestCase):
                 fpr = rm._fpr(rm._density(rm.bloom_of_tokens(rm._region_token_set(seg, by), m, k), m), k)
                 self.assertLessEqual(fpr, F)                           # each multi-entry segment is calm
 
+    def test_scope_is_region_granular_even_when_segmented(self):
+        """PINS the boundary of the literal-recall guarantee: it is mechanically complete to the
+        REGION, not to the segment/entry. When a region saturates, build_blooms stores it as
+        per-segment filters (`region/N`) — yet scope_literal collapses a hit back to the PARENT
+        region. Descending to the specific segment is read-protocol policy, NOT enforced; the
+        recursive-to-leaf drill (RFC §5.3 / §7 M4) is designed, not yet wired. If this ever
+        flips (scope returns a `region/N` target), the guarantee was strengthened — update the
+        RFC shipped-status note and this test together."""
+        txt = "".join(
+            "- **[DECISION] unique token zzz%03d here.**\n"
+            "  <!-- roeh id=s%03d class=decision atomic=true date=2026-08-%02d topic-hint=big -->\n"
+            % (i, i, (i % 28) + 1) for i in range(40))
+        by = {e.id: e for e in rm.parse_entries(txt)}
+        region_ids = {"big": list(by)}
+        blooms = rm.build_blooms(by, region_ids, 256, 7, 0.10)          # small m forces saturation
+        self.assertTrue(any("/" in key for key in blooms),
+                        "precondition: the saturated region is stored as segment filters")
+        hits = rm.scope_literal("zzz017", blooms)                       # token lives in ONE segment
+        self.assertEqual(hits, {"big"},
+                         "scope must return the parent region, region-granular — not a segment id")
+        self.assertNotIn("big/1", hits)                                 # no segment-level target offered
+
 
 class Step3ReviewFixes(unittest.TestCase):
     def test_1_conflict_surfaced_symmetrically(self):

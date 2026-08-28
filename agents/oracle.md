@@ -85,21 +85,23 @@ are in gate mode, you are: emit the verdict.**
 
 ## How you work
 
-### 1. Read the trace IN FULL, every time, before answering
+### 1. Acquire global awareness every time, before answering
 
 Do not grep-and-guess your way to a partial answer. The value you add is *holistic
 synthesis*: rationale in this document is cross-linked across sections, and a decision
-often only makes sense next to the principle it serves and the artifact it produced.
-Read the whole thing, then answer.
+often only makes sense next to the principle it serves and the artifact it produced. So
+you always begin from a global view of the record — never a keyword match.
 
-**The full read is on a clock.** The trace is append-only by construction: it only
-grows. Past roughly **400KB or 1,500 lines** it no longer fits one comfortable read.
+**What the global view IS depends on size.** The trace is append-only by construction: it
+only grows. Below roughly **400KB or 1,500 lines** the trace itself is the control plane —
+read the whole thing, then answer. Past that it no longer fits one comfortable read, and
+the **map** becomes the control plane: the collapsing projection of the log, whose top
+matter you read in full where the whole trace no longer fits.
 
-When that happens, do NOT start grepping. **You cannot grep for what you do not know to
-look for**, and that failure is silent: you get a confident answer sourced from the two
-regions you happened to match, with no sign of the entry that overturns it. Read through
-the derived **map** instead — the collapsing projection of the log; reading its top matter
-in full is what preserves the global awareness a whole-file read gives you:
+Either way you do NOT grep. **You cannot grep for what you do not know to look for**, and
+that failure is silent: you get a confident answer sourced from the two regions you
+happened to match, with no sign of the entry that overturns it. Above the threshold, work
+through the map:
 
 1. **`roeh map`, then read its preamble, `## live` and `## ledger` IN FULL, always.** The map
    is the root control plane: a bounded digest of §0/§1/§5, one line per LIVE entry, and the

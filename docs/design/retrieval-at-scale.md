@@ -164,6 +164,17 @@ the OR of its children's, so **a token in any leaf is present in every ancestor'
 literal query token therefore drills to its leaf with **no false negatives** (only extra
 reads). This is the mechanical backbone of §8 and the reason literal recall is *complete*.
 
+> **Shipped status (2026-08-28) — read this as the boundary of the guarantee.** The
+> leaf-level drill above is the DESIGN. The shipped `scope_literal` is **region-granular**:
+> it returns the *parent region* of any matching Bloom (it collapses saturation segments
+> back to the region), so mechanical literal recall is complete **to the region boundary**.
+> Descending from a segmented region into the specific `region/N` segment or entry is
+> currently read-protocol *policy* — the caller reads the region's segments — **not**
+> mechanically enforced; the recursive-to-leaf M4 (§7) is not yet wired. Building it means
+> aligning the two segmentations (saturation-by-FPR vs display-by-`SEGMENT_TOKENS`) or
+> adding per-segment scope. Until then the honest claim is *"complete to the region
+> boundary,"* which is what the tests pin.
+
 ## 6. Cold regions & retirement (formal)
 
 For region `r`: `E(r)` = its entries, `P(r)` = its path footprint (`⋃_{e∈E(r)} C(e)`),

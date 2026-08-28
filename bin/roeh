@@ -995,7 +995,10 @@ def _load_blooms(cfg, rm, text, budget, D, as_of):
 def cmd_scope(args):
     """Debug the retrieval frontier for a query: its ≥3-char literal tokens and the mechanically
     complete set of regions whose Bloom matches any of them (the MUST-drill set — no false
-    negatives). Uses the IDENTICAL tokenizer as the map, which is what the guarantee rests on.
+    negatives), complete to the REGION boundary: which segment/entry inside a drilled region
+    holds the token is the caller's read, NOT narrowed here (recursive-to-leaf drill is designed,
+    not yet wired — see retrieval-at-scale.md §5.3 shipped-status).
+    Uses the IDENTICAL tokenizer as the map, which is what the guarantee rests on.
     Reads the materialized bloom sidecar when fresh; recomputes otherwise. Exit 0."""
     cfg = load_config()
     trace = cfg["trace_abs"]
