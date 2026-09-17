@@ -1321,6 +1321,61 @@ class TestSessionStartHook(RoehCase):
         self.assertNotIn("Currently gated on", ctx,
                          "injected the superseded §5 instead of the latest")
 
+    def test_startup_injects_the_resume_state(self):
+        """The owner ruled 2026-09-17 that startup gets §5 too.
+
+        The prior split gave §5 only to compact/clear/fork on the theory that a
+        fresh startup could go read the trace itself. Observed otherwise: on
+        2026-09-09 the owner asked a question the current §5 led with, and the
+        session could not answer because §5 was never delivered — then asked,
+        verbatim, "Isn't is supposed to be in section 5 on your startup".
+        """
+        self.init()
+        self.make_trace()
+        _, out, _ = self.hook(SESSIONSTART, {"trigger": "startup"})
+        ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("DECISION TRACE:", ctx)
+        self.assertIn("§5", ctx)
+        self.assertIn("Resume state", ctx)
+
+    def test_startup_injects_the_LAST_resume_state(self):
+        """Startup inherits the supersession discipline, not just the content:
+        an append-only §5 is superseded by appending a newer one."""
+        self.init()
+        self.make_trace()
+        self.roeh("append", "-", stdin=(
+            "\n## §5 — Resume state (superseding)\n\n"
+            "- **Where we are:** NEWEST-STATE-MARKER\n"))
+        _, out, _ = self.hook(SESSIONSTART, {"trigger": "startup"})
+        ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("NEWEST-STATE-MARKER", ctx)
+        self.assertNotIn("Currently gated on", ctx,
+                         "injected the superseded §5 instead of the latest")
+
+    def test_startup_keeps_the_staleness_warning_alongside_the_resume_state(self):
+        """§5 must not displace the behind-the-work warning. A resume state and
+        the fact that it may be stale are both load-bearing, and the warning is
+        what qualifies the state the model is about to trust."""
+        self.init()
+        self.make_trace()
+        self.commit()
+        _, out, _ = self.hook(SESSIONSTART, {"trigger": "startup"})
+        d = json.loads(out)
+        ctx = d["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("BEHIND THE WORK", ctx)
+        self.assertIn("Resume state", ctx)
+        self.assertIn("behind", d["systemMessage"])
+
+    def test_startup_does_not_dump_the_whole_file(self):
+        """The budget applies on startup too — it is now on the hot path of
+        every session, not just post-compaction ones."""
+        self.init()
+        self.make_trace()
+        _, out, _ = self.hook(SESSIONSTART, {"trigger": "startup"})
+        ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        self.assertNotIn("Why this file exists", ctx,
+                         "§5 extraction leaked other sections")
+
     def test_startup_reports_current(self):
         self.init()
         self.make_trace()
