@@ -302,10 +302,23 @@ def status(cfg, active_session=None):
     # A memory directory is optional — plenty of projects have none.
     mem_dir = os.path.join(os.path.expanduser("~/.claude/projects"),
                            slug_for(cfg["_root"]), "memory")
+    # Exclude roeh's OWN artifacts, derived from the configured trace name the
+    # same way `map` derives the filename it writes (`<trace>-map.md`) — not
+    # hardcoded, or a project whose trace is named anything else has both its
+    # trace and its map counted as changed source memory.
+    #
+    # The map matters most: `refresh` ENDS by regenerating it so the projection
+    # serves the entries just recorded, which makes mtime(map) > mtime(trace)
+    # the instant the pass finishes. Counting it meant the pass whose job is to
+    # clear "the record is behind the work" reliably terminated by SETTING that
+    # flag — so the SessionStart warning was always on, which is precisely how
+    # a check gets tuned out. Found dogfooding a refresh, 2026-09-17.
+    _trace_base = os.path.basename(cfg["trace_abs"])
+    _own = {_trace_base, _trace_base.rsplit(".", 1)[0] + "-map.md"}
     mem_changed = []
     if exists and os.path.isdir(mem_dir):
         for name in sorted(os.listdir(mem_dir)):
-            if not name.endswith(".md") or name == "decision-trace.md":
+            if not name.endswith(".md") or name in _own:
                 continue
             p = os.path.join(mem_dir, name)
             if os.path.getmtime(p) > trace_mtime:

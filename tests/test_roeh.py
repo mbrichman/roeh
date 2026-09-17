@@ -1280,6 +1280,59 @@ class TestPreCompactHook(RoehCase):
                                  f"{trigger}/{pc} emitted an unsupported field")
 
 
+class TestStatusMemoryScan(RoehCase):
+    """`status` decides `behind` partly from the project memory directory. It
+    must count files a human wrote and ignore files roeh itself emits."""
+
+    def _sovereign_trace(self):
+        """Reproduce the sovereign arrangement: the trace lives in the memory
+        directory, deliberately outside the repo. `roeh map` writes its derived
+        CP as `<trace>-map.md` — which in this layout lands INSIDE the scanned
+        directory, where a naive scan sees it as a source memory file."""
+        _, slug, _ = self.roeh("slug", self.dir)
+        memdir = os.path.join(self.home, ".claude", "projects",
+                              slug.strip(), "memory")
+        os.makedirs(memdir, exist_ok=True)
+        trace = os.path.join(memdir, "decision-trace.md")
+        with open(SKELETON) as f:
+            skel = f.read().replace("{{PROJECT}}", "testproj")
+        with open(trace, "w", encoding="utf-8") as f:
+            f.write(skel)
+        self.set_config(trace=trace)
+        return memdir, trace
+
+    def test_status_ignores_the_derived_map(self):
+        """The map is roeh's OWN output, not a source memory file.
+
+        Counting it is self-defeating: the documented refresh sequence ENDS by
+        regenerating the map so it serves the entries just recorded, which
+        makes mtime(map) > mtime(trace) the moment the pass completes. The pass
+        whose whole job is to clear "the record is behind the work" therefore
+        terminated by setting that flag — and an always-on warning is what this
+        codebase elsewhere calls "how a check gets tuned out".
+        """
+        self.init()
+        self._sovereign_trace()
+        self.roeh("map")
+        st = json.loads(self.roeh("status", "--json")[1])
+        self.assertNotIn("decision-trace-map.md", st["memory_changed"])
+        self.assertFalse(st["behind"],
+                         "a freshly-mapped, fully-mined record reads behind")
+
+    def test_status_still_counts_a_real_memory_file(self):
+        """The guard against over-correcting: excluding the map must not blunt
+        the check. A file a human actually wrote still counts."""
+        self.init()
+        memdir, _ = self._sovereign_trace()
+        self.roeh("map")
+        time.sleep(1.1)          # coarse mtime resolution
+        with open(os.path.join(memdir, "notes.md"), "w", encoding="utf-8") as f:
+            f.write("something the owner wrote\n")
+        st = json.loads(self.roeh("status", "--json")[1])
+        self.assertIn("notes.md", st["memory_changed"])
+        self.assertTrue(st["behind"])
+
+
 class TestSessionStartHook(RoehCase):
 
     def test_silent_without_a_config(self):
