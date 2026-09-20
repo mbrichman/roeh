@@ -30,14 +30,18 @@ verbatim. §5 goes to EVERY trigger; the framing around it differs:
       assumed.
 
 Reads no more than RESUME_BUDGET of §5 so a large trace cannot crowd out the
-context it is meant to inform.
+context it is meant to inform. When a §5 region overflows that budget the HEAD
+is dropped and the TAIL kept — §5 is "where we are NOW", and when a block grows
+past budget it is because newer addenda accreted at its END, so the newest state
+is the last thing in the region, not the first.
 
-CAUTION: that budget is now on the hot path of EVERY session, and truncation is
-HEAD-first — a §5 longer than RESUME_BUDGET loses its TAIL, which is where the
-newest addenda live. Measured 2026-09-17: a 67,926-char §5 delivered only its
-superseded preamble, announcing a decision as unruled hours after it was ruled.
-Keep §5 blocks under RESUME_BUDGET; appending a new §5 block is how it stays
-that way.
+History: truncation used to be HEAD-first, and it bit twice. 2026-09-17: a
+67,926-char §5 delivered only its superseded preamble, announcing a decision as
+unruled hours after it was ruled. 2026-09-20: a 271KB §5 region (43 addenda
+under one stale heading) delivered only pre-09-18 state — the newest work was
+invisible at session start. Tail-first is the fix; the healthy discipline is
+still to append a NEW dated §5 block rather than addenda under the old heading,
+so the region never grows past budget in the first place.
 """
 import json
 import os
@@ -58,19 +62,34 @@ def out(payload, context=None):
     sys.exit(0)
 
 
-def section(path, marker):
-    """Pull one §N section out of the trace.
+def section(path, marker, anchor=None):
+    """Pull one §N section out of the trace, budget-bounded.
 
     Deliberately tolerant of heading depth and of '§5'/'5.' styles: the trace
     is hand-edited by a human under time pressure, and a fragile parser here
-    would silently return nothing exactly when the record matters most.
+    would silently return nothing exactly when the record matters most. It is
+    tolerant, NOT indiscriminate — two failures found by refreshing a large
+    trace in production forced the discipline below.
     """
     try:
         text = open(path, errors="ignore").read()
     except Exception:
         return ""
-    pat = re.compile(rf"^#{{1,6}}\s*(?:§\s*)?{marker}\b.*$", re.M)
+    # `{marker}\b` on its own also matches decimal SUBSECTIONS ("## 5.3 …"), so
+    # a single RFC-style subsection appended after the last real §5 chapter
+    # would hijack `hits[-1]` and get delivered in place of the resume state.
+    # Exclude `5.<digit>` from selection. (Measured 2026-09-20: a large trace
+    # matched 63 headings on `5\b`; only 7 were real §5 resume chapters.)
+    pat = re.compile(rf"^#{{1,6}}\s*(?:§\s*)?{marker}\b(?!\.\d).*$", re.M)
     hits = list(pat.finditer(text))
+    if anchor and hits:
+        # Prefer headings that actually NAME the section (e.g. "Resume state"),
+        # so an old-style or mis-numbered heading cannot outrank a real one.
+        # Fall back to the plain match if the trace phrases §5 differently —
+        # tolerance over fragility, because a miss here is a silent one.
+        named = [h for h in hits if re.search(anchor, h.group(0), re.I)]
+        if named:
+            hits = named
     if not hits:
         return ""
     # LAST occurrence, not first. The file is append-only, so a section is
@@ -82,9 +101,22 @@ def section(path, marker):
     m = hits[-1]
     start = m.start()
     nxt = re.compile(r"^#{1,6}\s*(?:§\s*)?\d+\b", re.M).search(text, m.end())
-    body = text[start:nxt.start() if nxt else len(text)]
+    body = text[start:nxt.start() if nxt else len(text)].strip()
     if len(body) > RESUME_BUDGET:
-        body = body[:RESUME_BUDGET] + "\n\n…[§5 truncated — read the file for the rest]"
+        # Keep the HEADING line for context, drop the middle, keep the newest
+        # TAIL. Head-first truncation delivered the oldest content and dropped
+        # exactly what the next session needed (see the module docstring).
+        head = body.split("\n", 1)[0]
+        note = ("\n\n…[§5 head truncated — newest state below; "
+                "read the file for the full block]\n\n")
+        keep = RESUME_BUDGET - len(head) - len(note)
+        tail = body[-keep:] if keep > 0 else ""
+        # Don't begin mid-line: if the cut landed inside a line, drop its
+        # partial leading fragment.
+        cut = tail.find("\n")
+        if 0 <= cut < 200:
+            tail = tail[cut + 1:]
+        body = head + note + tail
     return body.strip()
 
 
@@ -128,7 +160,7 @@ def main():
     )
 
     if trigger in ("compact", "clear", "fork"):
-        resume = section(trace, "5")
+        resume = section(trace, "5", anchor=r"resume\s*state")
         body = header + (
             "\nThe context that preceded this point is gone. The record is not. "
             "Below is §5 RESUME STATE verbatim — treat it as authoritative on "
@@ -175,7 +207,7 @@ def main():
     # for the evidence that forced it. It goes AFTER the warnings deliberately:
     # `stale` qualifies the very state the model is about to treat as current,
     # so it has to be read first to be worth anything.
-    resume = section(trace, "5")
+    resume = section(trace, "5", anchor=r"resume\s*state")
     resume_block = (
         "\nBelow is §5 RESUME STATE verbatim — the record's own account of where "
         "this project stands. Treat it as authoritative on build state and next "

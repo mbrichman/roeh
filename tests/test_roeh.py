@@ -1405,6 +1405,49 @@ class TestSessionStartHook(RoehCase):
         self.assertNotIn("Currently gated on", ctx,
                          "injected the superseded §5 instead of the latest")
 
+    def test_an_oversized_resume_delivers_its_newest_tail_not_its_head(self):
+        """A §5 that overflows the budget must keep its TAIL — the newest state
+        — not its head. Regression for 2026-09-20: 43 addenda accreted under one
+        heading, the region ran to 271KB, and head-first truncation delivered
+        only pre-09-18 state while the newest work was invisible at start."""
+        self.init()
+        self.make_trace()
+        filler = "".join(
+            "- filler line %d padding padding padding padding\n" % i
+            for i in range(600))
+        self.roeh("append", "-", stdin=(
+            "\n## §5 — Resume state (superseding)\n\n"
+            "- **Where we are (STALE):** OLD-HEAD-MARKER\n"
+            + filler
+            + "- **Where we are (CURRENT):** NEWEST-TAIL-MARKER\n"))
+        _, out, _ = self.hook(SESSIONSTART, {"trigger": "compact"})
+        ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("NEWEST-TAIL-MARKER", ctx,
+                      "budget truncation dropped the newest state (head-first)")
+        self.assertNotIn("OLD-HEAD-MARKER", ctx,
+                         "delivered the oldest addenda instead of the newest")
+        self.assertIn("head truncated", ctx, "no truncation notice emitted")
+        self.assertLess(len(ctx), 20000,
+                        "budget not enforced — the whole region was dumped")
+
+    def test_a_trailing_decimal_subsection_does_not_hijack_the_resume_state(self):
+        r"""`5\b` alone also matches "## 5.3 …"; an RFC-style subsection after
+        the last real §5 chapter would otherwise become hits[-1] and be
+        delivered in place of the resume state (the 63-vs-7 selector gap)."""
+        self.init()
+        self.make_trace()
+        self.roeh("append", "-", stdin=(
+            "\n## §5 — Resume state (superseding)\n\n"
+            "- **Where we are:** NEWEST-STATE-MARKER\n"))
+        self.roeh("append", "-", stdin=(
+            "\n### 5.3 A subsection that is not a resume state\n\n"
+            "- DECIMAL-SUBSECTION-MARKER\n"))
+        _, out, _ = self.hook(SESSIONSTART, {"trigger": "compact"})
+        ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("NEWEST-STATE-MARKER", ctx,
+                      "a 5.x subsection hijacked §5 selection")
+        self.assertNotIn("DECIMAL-SUBSECTION-MARKER", ctx)
+
     def test_startup_keeps_the_staleness_warning_alongside_the_resume_state(self):
         """§5 must not displace the behind-the-work warning. A resume state and
         the fact that it may be stale are both load-bearing, and the warning is
