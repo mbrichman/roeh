@@ -522,6 +522,31 @@ class TestRecord(RoehCase):
         rm = self.roeh_map()
         self.assertEqual(rm.verify_chain(self.entries()), (0, "intact"))
 
+    def test_record_recovers_when_a_writer_interleaves_the_tail(self):
+        """A concurrent append landing between record's fold-read and its write must NOT leave a
+        stale stamp: the compare-and-swap re-reads, detects the moved tail, and recomputes the chain
+        over the new content. Regression for the two-session write race that stamped chains over a
+        tail that no longer existed (flock did not serialise the two writers)."""
+        self.init()
+        self.make_trace()
+        self.record(tag="DECISION", lead="base", why="x", date="2026-08-25")   # a real tail to fold over
+        # A valid entry the seam will "concurrently" append between our fold-read and our CAS.
+        inj = os.path.join(self.dir, "inject.txt")
+        with open(inj, "w") as f:
+            f.write("\n- **[DECISION] interleaved by another writer.**\n")
+        code, out, err = self.roeh(
+            "record",
+            stdin=json.dumps(dict(tag="DECISION", lead="races the tail", why="z", date="2026-08-25")),
+            env={"ROEH_TEST_INJECT": inj})
+        self.assertEqual(code, 0, err)
+        eid = out.strip()
+        body = self.read("docs/decision-trace.md")
+        self.assertIn("interleaved by another writer", body)   # the concurrent append survived
+        self.assertIn(eid, body)                                # our record landed too
+        # Intact ONLY if our stamp folded over the tail that INCLUDES the interleaved entry — i.e.
+        # the CAS forced a recompute. Without it, eid's chain would omit the interleaved entry ⇒ break.
+        self.assertEqual(self.roeh_map().verify_chain(self.entries()), (0, "intact"))
+
     def test_supersession_kills_the_target(self):
         self.init()
         self.make_trace()
@@ -754,6 +779,102 @@ class TestRecord(RoehCase):
         self.assertEqual(code, 0, err)
         status, _ = self.roeh_map().compute_liveness(self.entries())
         self.assertEqual(status[tid], "dead")
+
+
+class TestRechain(RoehCase):
+    """`roeh rechain` — the one deliberate exception to append-only: repair a stale tamper-chain
+    stamp in place. The write-race CAS (TestRecord.test_record_recovers_…) prevents new stale stamps;
+    rechain cleans up ones written before that fix, which append-only cannot unwrite."""
+
+    def roeh_map(self):
+        if BIN not in sys.path:
+            sys.path.insert(0, BIN)
+        import roeh_map
+        return roeh_map
+
+    def entries(self):
+        return self.roeh_map().parse_entries(self.read("docs/decision-trace.md"))
+
+    def record(self, **obj):
+        return self.roeh("record", stdin=json.dumps(obj))
+
+    def two_records(self):
+        """A trace with two chained authored entries; returns (id_a, id_b)."""
+        self.init()
+        self.make_trace()
+        _, a, _ = self.record(tag="DECISION", lead="first", why="x", date="2026-08-25")
+        _, b, _ = self.record(tag="DECISION", lead="second", why="y", date="2026-08-25")
+        return a.strip(), b.strip()
+
+    def corrupt(self, eid, wrong="0000000000000000"):
+        """Overwrite one entry's stored `chain=` with a wrong value, scoped to that entry's meta line
+        — exactly the damage a raced writer leaves. Returns the good stamp it clobbered."""
+        e = next(x for x in self.entries() if x.id == eid)
+        good = e.chain
+        self.assertTrue(good, "entry under test has no stamp to corrupt")
+        body = self.read("docs/decision-trace.md")
+        body = body.replace("chain=" + good, "chain=" + wrong, 1)
+        self.write("docs/decision-trace.md", body)
+        return good
+
+    def test_rechain_repairs_a_stale_stamp(self):
+        a, b = self.two_records()
+        good = self.corrupt(b)
+        # A corrupted stamp is a tamper break…
+        self.assertEqual(self.roeh_map().verify_chain(self.entries())[0], 7)
+        code, out, err = self.roeh("rechain", b)
+        self.assertEqual(code, 0, err)
+        self.assertIn("rechain " + b, out)
+        self.assertIn("intact", out)
+        # …that recomputes to exactly the stamp we clobbered.
+        self.assertEqual(next(e for e in self.entries() if e.id == b).chain, good)
+        self.assertEqual(self.roeh_map().verify_chain(self.entries()), (0, "intact"))
+
+    def test_rechain_refuses_an_intact_stamp_and_writes_nothing(self):
+        a, b = self.two_records()
+        before = self.read("docs/decision-trace.md")
+        code, out, err = self.roeh("rechain", b)
+        self.assertEqual(code, 0, err)
+        self.assertIn("already intact", out)
+        self.assertEqual(self.read("docs/decision-trace.md"), before,
+                         "rechain touched a trace whose stamp was already clean")
+
+    def test_rechain_refuses_a_chainless_entry(self):
+        """A derived/legacy entry (chain="") is not corrupt — verify skips it — so rechain must not
+        invent a stamp for it."""
+        self.init()
+        self.make_trace()
+        # Append a raw, unindexed entry: it parses with a derived id and no chain.
+        with open(os.path.join(self.dir, "docs/decision-trace.md"), "a") as f:
+            f.write("\n- **[DECISION] a legacy entry with no stamp.**\n"
+                    "  <!-- roeh date=2026-08-25 -->\n")
+        derived = next(e for e in self.entries() if e.derived_id and not e.chain)
+        code, _, err = self.roeh("rechain", derived.id)
+        self.assertNotEqual(code, 0)
+        self.assertIn("no stamp", err)
+
+    def test_rechain_all_repairs_every_stale_stamp(self):
+        a, b = self.two_records()
+        self.corrupt(a, "1111111111111111")
+        self.corrupt(b, "2222222222222222")
+        self.assertEqual(self.roeh_map().verify_chain(self.entries())[0], 7)
+        code, out, err = self.roeh("rechain", "--all")
+        self.assertEqual(code, 0, err)
+        self.assertIn("rechained 2 stamp(s)", out)
+        self.assertEqual(self.roeh_map().verify_chain(self.entries()), (0, "intact"))
+
+    def test_rechain_dry_run_writes_nothing(self):
+        a, b = self.two_records()
+        self.corrupt(b)
+        before = self.read("docs/decision-trace.md")
+        code, out, err = self.roeh("rechain", b, "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn("would rechain " + b, out)
+        self.assertIn("dry run", out)
+        self.assertEqual(self.read("docs/decision-trace.md"), before,
+                         "a dry run mutated the trace")
+        # Still broken — nothing was repaired.
+        self.assertEqual(self.roeh_map().verify_chain(self.entries())[0], 7)
 
 
 class TestPending(RoehCase):

@@ -555,6 +555,12 @@ def _load_roeh_map():
 
 _UNSAFE = ("<!--", "-->", "\n", "\r")
 
+# `roeh record` folds the chain over every existing entry, so a stamp is valid only against the exact
+# tail it read. flock serialises same-host writers but cannot be trusted alone (a second host, a
+# writer that does not flock, a synced/networked backing), so record re-reads and retries when the
+# tail moves under it — this bounds how many times it recomputes before giving up.
+_RECORD_CAS_RETRIES = 5
+
 
 def _reject_unsafe(value, what, extra=()):
     """A field value comes from untrusted JSON and is interpolated into the authoritative log. Reject
@@ -692,85 +698,118 @@ def cmd_record(args):
         # forge a meta key (review P0-1/#5). Edges/cites live in visible field lines, so `,` suffices there.
         _reject_unsafe(h, f"topic-hint {h!r}", extra=(",", "="))
 
-    # The whole read→validate→chain→append is done under an exclusive lock so two concurrent
-    # writers cannot both chain off the same tail (the second's chain would silently lie). append
-    # is O_APPEND (bytes don't interleave), but the CHAIN needs the read+write to be atomic as a unit.
+    # The chain folds over every existing entry, so a stamp is valid only against the exact tail it
+    # read. flock serialises same-host writers, but an append that lands between our read and our
+    # write — from a second host, a writer that does not flock, or a synced backing flock cannot
+    # cover — leaves this stamp computed over a tail that no longer exists: a SILENT chain break
+    # (observed in production when two sessions recorded into one trace at once). So the lock is a
+    # courtesy; correctness rests on a compare-and-swap — re-read immediately before writing and, if
+    # the tail moved, recompute against it and retry — plus a post-write proof that the appended
+    # entry recomputes clean, surfacing any residual race LOUD rather than as a silent break.
     with open(trace, "r+", encoding="utf-8") as f:
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
         try:
-            f.seek(0)
-            cur = f.read()
-            entries = rm.parse_entries(cur)
-            by_id = {e.id: e for e in entries}
+            for _attempt in range(_RECORD_CAS_RETRIES):
+                f.seek(0)
+                cur = f.read()
+                entries = rm.parse_entries(cur)
+                by_id = {e.id: e for e in entries}
 
-            # Mechanical facts → refuse (not the reader's job to tolerate what the writer can prevent).
-            for name in ("supersedes", "augments", "conflicts"):
-                for t in edges[name]:
-                    if t not in by_id:
-                        die(f"{name} target {t} does not exist in the trace")
-            if tag in ("REVERSAL", "CORRECTION") and not edges["supersedes"] and not edges["augments"]:
-                die(f"{tag} needs a typed Supersedes:/Augments: edge — "
-                    "an overturn with no edge reads as prose-only (⇒ UNCERTAIN)")
+                # Mechanical facts → refuse (not the reader's job to tolerate what the writer can prevent).
+                for name in ("supersedes", "augments", "conflicts"):
+                    for t in edges[name]:
+                        if t not in by_id:
+                            die(f"{name} target {t} does not exist in the trace")
+                if tag in ("REVERSAL", "CORRECTION") and not edges["supersedes"] and not edges["augments"]:
+                    die(f"{tag} needs a typed Supersedes:/Augments: edge — "
+                        "an overturn with no edge reads as prose-only (⇒ UNCERTAIN)")
 
-            # id = 64-bit content hash (immutable once written). A collision is treated as a duplicate
-            # and refused below — at 64 bits a different-content collision is ~2^-64, so no salt path.
-            eid = _content_id(d, tag, lead)
-            # Collision → duplicate → refuse. Scan the RAW text, not `by_id`: a pre-existing duplicate
-            # id is disambiguated by the reader to `id~dupL#`, so it would not appear in `by_id` in its
-            # bare form and the collision would slip through (review P2-5).
-            if re.search(r"(?<![\w-])id=" + re.escape(eid) + r"(?![0-9a-f])", cur):
-                die(f"duplicate: id {eid} is already in the trace "
-                    "(same date+tag+lead) — vary the lead if this is a genuinely different decision")
+                # id = 64-bit content hash (immutable once written). A collision is treated as a duplicate
+                # and refused below — at 64 bits a different-content collision is ~2^-64, so no salt path.
+                eid = _content_id(d, tag, lead)
+                # Collision → duplicate → refuse. Scan the RAW text, not `by_id`: a pre-existing duplicate
+                # id is disambiguated by the reader to `id~dupL#`, so it would not appear in `by_id` in its
+                # bare form and the collision would slip through (review P2-5).
+                if re.search(r"(?<![\w-])id=" + re.escape(eid) + r"(?![0-9a-f])", cur):
+                    die(f"duplicate: id {eid} is already in the trace "
+                        "(same date+tag+lead) — vary the lead if this is a genuinely different decision")
 
-            # Chain = fold chain_link through EVERY existing id (matching _expected_chains), then this
-            # id. Reading the tail's stored chain is not enough: a legacy tail has none.
-            prev = ""
-            for e in entries:
-                prev = rm.chain_link(prev, e.chain_id)   # chain_id, matching _expected_chains
-            chain = rm.chain_link(prev, eid)
+                # Chain = fold chain_link through EVERY existing id (matching _expected_chains), then this
+                # id. Reading the tail's stored chain is not enough: a legacy tail has none.
+                prev = ""
+                for e in entries:
+                    prev = rm.chain_link(prev, e.chain_id)   # chain_id, matching _expected_chains
+                chain = rm.chain_link(prev, eid)
 
-            block = _format_record(tag, lead, req, edges, cites, eid, atomic, d, hints, chain)
-            sep = "" if (not cur or cur.endswith("\n")) else "\n"
+                block = _format_record(tag, lead, req, edges, cites, eid, atomic, d, hints, chain)
+                sep = "" if (not cur or cur.endswith("\n")) else "\n"
 
-            # (a) The formatted entry MUST round-trip through the reader to exactly what we intended —
-            # a belt-and-braces catch for anything that slipped past _reject_unsafe (review P0-1). If it
-            # does not parse back to ONE entry carrying our id/edges/meta, a field forged the record.
-            rt = rm.parse_entries(block)
-            if not (len(rt) == 1 and rt[0].id == eid and rt[0].tag == tag and rt[0].date == d
-                    and bool(rt[0].atomic) == atomic and rt[0].chain == chain
-                    and rt[0].supersedes == edges["supersedes"] and rt[0].augments == edges["augments"]
-                    and rt[0].conflicts == edges["conflicts"] and rt[0].cites == cites
-                    and rt[0].topic_hint == hints):
-                die("refusing: the formatted entry does not round-trip through the reader "
-                    "(a field value would corrupt or forge the record)")
+                # (a) The formatted entry MUST round-trip through the reader to exactly what we intended —
+                # a belt-and-braces catch for anything that slipped past _reject_unsafe (review P0-1). If it
+                # does not parse back to ONE entry carrying our id/edges/meta, a field forged the record.
+                rt = rm.parse_entries(block)
+                if not (len(rt) == 1 and rt[0].id == eid and rt[0].tag == tag and rt[0].date == d
+                        and bool(rt[0].atomic) == atomic and rt[0].chain == chain
+                        and rt[0].supersedes == edges["supersedes"] and rt[0].augments == edges["augments"]
+                        and rt[0].conflicts == edges["conflicts"] and rt[0].cites == cites
+                        and rt[0].topic_hint == hints):
+                    die("refusing: the formatted entry does not round-trip through the reader "
+                        "(a field value would corrupt or forge the record)")
 
-            # (b) The append MUST NOT introduce new UNCERTAIN — competing successors with no conflict
-            # link, a dropped augment across a supersession, etc. are the writer's to prevent, not the
-            # reader's to tolerate (review P1-3). Diff liveness across the append; refuse on any newly
-            # uncertain entry, quoting the reader's own reason.
-            before, _ = rm.compute_liveness(entries)
-            after, areason = rm.compute_liveness(rm.parse_entries(cur + sep + block))
-            refuse, warn = [], []
-            for i in after:
-                if after[i] == "uncertain" and before.get(i) != "uncertain":
-                    # "non-atomic entry superseded" is a property of the TARGET — a legacy or
-                    # append-authored entry with no atomic stamp — not a fault the new record can fix
-                    # (it cannot retro-stamp the old entry). Warn and allow, or `record` could never
-                    # supersede any pre-v3 entry (review #1). Everything else — competing successors,
-                    # a dropped augment, a dangling/prose-only edge — the writer MUST prevent.
-                    (warn if "non-atomic entry superseded" in areason[i] else refuse).append(areason[i])
-            if refuse:
-                die("refusing: this record would introduce UNCERTAIN — " + "; ".join(sorted(set(refuse))))
-            for w in sorted(set(warn)):
-                sys.stderr.write("warning: " + w + "\n")
+                # (b) The append MUST NOT introduce new UNCERTAIN — competing successors with no conflict
+                # link, a dropped augment across a supersession, etc. are the writer's to prevent, not the
+                # reader's to tolerate (review P1-3). Diff liveness across the append; refuse on any newly
+                # uncertain entry, quoting the reader's own reason.
+                before, _ = rm.compute_liveness(entries)
+                after, areason = rm.compute_liveness(rm.parse_entries(cur + sep + block))
+                refuse, warn = [], []
+                for i in after:
+                    if after[i] == "uncertain" and before.get(i) != "uncertain":
+                        # "non-atomic entry superseded" is a property of the TARGET — a legacy or
+                        # append-authored entry with no atomic stamp — not a fault the new record can fix
+                        # (it cannot retro-stamp the old entry). Warn and allow, or `record` could never
+                        # supersede any pre-v3 entry (review #1). Everything else — competing successors,
+                        # a dropped augment, a dangling/prose-only edge — the writer MUST prevent.
+                        (warn if "non-atomic entry superseded" in areason[i] else refuse).append(areason[i])
+                if refuse:
+                    die("refusing: this record would introduce UNCERTAIN — " + "; ".join(sorted(set(refuse))))
 
-            f.seek(0, os.SEEK_END)
-            f.write(sep + block)              # one write of one complete record
-            f.flush()
-            os.fsync(f.fileno())              # durable before the lock releases
+                # TEST SEAM (ROEH_TEST_INJECT only): simulate a concurrent writer landing an append
+                # between our fold-read and the CAS, to exercise the retry path deterministically. Fires
+                # once — on retry the payload is already in `cur`, so it is not re-injected.
+                _inj = os.environ.get("ROEH_TEST_INJECT")
+                if _inj and os.path.exists(_inj):
+                    _payload = open(_inj, encoding="utf-8").read()
+                    if _payload and _payload not in cur:
+                        with open(trace, "a", encoding="utf-8") as _af:
+                            _af.write(_payload)
+
+                # COMPARE-AND-SWAP: the fold above is valid only if the tail is still exactly `cur`. If a
+                # writer flock could not serialise slipped in, recompute against the new content.
+                f.seek(0)
+                if f.read() != cur:
+                    continue
+
+                for w in sorted(set(warn)):
+                    sys.stderr.write("warning: " + w + "\n")
+                f.seek(0, os.SEEK_END)
+                f.write(sep + block)              # one write of one complete record
+                f.flush()
+                os.fsync(f.fileno())              # durable before the lock releases
+
+                # PROVE it: our entry must recompute clean against the file we just wrote. A writer that
+                # interleaved in the window between the CAS re-read and this append leaves our stamp
+                # stale — append-only cannot unwrite it, so surface it LOUD to be repaired, never silent.
+                f.seek(0)
+                if rm._expected_chains(rm.parse_entries(f.read())).get(eid) != chain:
+                    die(f"recorded {eid}, but a concurrent write interleaved and its chain is now stale "
+                        "— run `roeh verify`; the stamp needs a rechain repair before the chain is trusted")
+                print(eid)
+                return
+            die(f"record: the trace kept changing under concurrent writers after "
+                f"{_RECORD_CAS_RETRIES} attempts — retry")
         finally:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-    print(eid)
 
 
 def cmd_id(args):
@@ -1055,6 +1094,140 @@ def cmd_verify(args):
         print("stale: projection inputs changed since the map was built — run `roeh map`")
         sys.exit(6)
     print("fresh + intact")
+
+
+def cmd_rechain(args):
+    """Repair a STALE tamper-chain stamp in place — the ONE deliberate exception to append-only.
+
+    `roeh record` stamps each entry with chain_i = H(fold-of-prior-ids ‖ id_i). If a writer that
+    flock could not serialise (a second host, a writer that does not flock, a synced/networked
+    backing) lands an append between another writer's fold-read and its write, that writer's stamp is
+    computed over a tail that no longer exists — `roeh verify` then exits 7 "chain break at <id>".
+    The compare-and-swap in `roeh record` closes that race; this cleans up stamps written before the
+    fix, or by a writer outside it. Append-only cannot unwrite a stamp, so rechain recomputes the
+    CORRECT chain for the named entry (or every stale one, with --all) and rewrites ONLY that entry's
+    `chain=` field — no other byte of the log moves, and because the fold is over ids (not stored
+    stamps) no other entry's chain depends on the one being repaired.
+
+    It REFUSES an entry whose stamp already recomputes clean (nothing to repair) and an entry with no
+    stamp at all (chain="" — a derived/legacy entry `verify` skips; a stamp there would be invented,
+    not repaired). Mutating the authoritative log — invoke deliberately; --dry-run shows the fix and
+    writes nothing.
+
+      roeh rechain <id>              repair the one entry `verify` named
+      roeh rechain --all            repair every stale stamp in the trace
+      roeh rechain <id> --dry-run   (or --all --dry-run) show the fix, write nothing
+    """
+    import fcntl
+    cfg = load_config()
+    trace = cfg["trace_abs"]
+    if not os.path.exists(trace):
+        die(f"no trace at {trace}")
+    rm = _load_roeh_map()
+    dry = "--dry-run" in args
+    do_all = "--all" in args
+    ids = [a for a in args if not a.startswith("-")]
+    if do_all and ids:
+        die("give an id OR --all, not both")
+    if not do_all and len(ids) != 1:
+        die("usage: roeh rechain <id> [--dry-run]  |  roeh rechain --all [--dry-run]")
+
+    with open(trace, "r+", encoding="utf-8") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            f.seek(0)
+            cur = f.read()
+            # Line indexing below maps parse_entries' line numbers (from str.splitlines) onto
+            # cur.split("\n"); the two agree for an LF-only file but a CR would shift them, so refuse
+            # rather than rewrite the wrong line.
+            if "\r" in cur:
+                die("trace contains CR characters — rechain rewrites by line and expects LF-only; "
+                    "inspect and normalise by hand")
+            entries = rm.parse_entries(cur)
+            exp = rm._expected_chains(entries)   # {served id: recomputed chain}; verify checks the same
+            # A stale stamp: a STORED chain that disagrees with the recompute. chain="" is not stale —
+            # verify skips it — so a derived/legacy entry is never a target.
+            stale = [e for e in entries if e.chain and e.chain != exp[e.id]]
+
+            if do_all:
+                targets = stale
+                if not targets:
+                    print("nothing to rechain — every stored stamp already recomputes clean")
+                    return
+            else:
+                want = ids[0]
+                matches = [e for e in entries if e.id == want]
+                if not matches:
+                    die(f"no entry with id {want} in the trace — `roeh verify` names the id it breaks "
+                        "at ('chain break at <id>'); pass that")
+                if len(matches) > 1:
+                    die(f"id {want} is ambiguous ({len(matches)} entries) — pass the disambiguated "
+                        "id~dupL<line> form the reader assigns")
+                e = matches[0]
+                if not e.chain:
+                    die(f"{want} carries no stamp (chain=\"\") — it is a derived/legacy entry that "
+                        "verify skips; nothing to rechain (a stamp would be invented, not repaired)")
+                if e.chain == exp[e.id]:
+                    print(f"{want} is already intact — stored stamp matches the recompute; nothing to do")
+                    return
+                targets = [e]
+
+            # Plan the edits: for each target, find its OWN `<!-- roeh … -->` meta line (scoped to the
+            # entry's line span so an identical stamp value elsewhere is never touched) and the exact
+            # `chain=<old>` token to replace. Refuse if it cannot be pinned down.
+            lines = cur.split("\n")
+            heads = sorted(e.line for e in entries)
+            plan = []
+            for t in targets:
+                new = exp[t.id]
+                start = t.line - 1
+                after = [h for h in heads if h > t.line]
+                end = (after[0] - 1) if after else len(lines)
+                meta_idx = None
+                for j in range(start, min(end, len(lines))):
+                    if "<!-- roeh" in lines[j] and ("chain=" + t.chain) in lines[j]:
+                        meta_idx = j
+                        break
+                if meta_idx is None:
+                    die(f"could not locate the meta line for {t.id} (chain={t.chain}) — the trace may "
+                        "have changed; re-run `roeh verify` and retry")
+                plan.append((t.id, meta_idx, t.chain, new))
+
+            for tid, _j, old, new in plan:
+                print(f"{'would rechain' if dry else 'rechain'} {tid}: chain {old} → {new}")
+            if dry:
+                print(f"(dry run — {len(plan)} stamp(s) would change; nothing written)")
+                return
+
+            for _tid, j, old, new in plan:
+                lines[j] = lines[j].replace("chain=" + old, "chain=" + new, 1)
+            out = "\n".join(lines)
+
+            # COMPARE-AND-SWAP: the file must still be exactly what we read, or a writer flock could
+            # not serialise slipped in — abort rather than clobber (consistent with record's CAS).
+            f.seek(0)
+            if f.read() != cur:
+                die("the trace changed while rechain held the lock — re-run `roeh verify` and retry")
+            f.seek(0)
+            f.write(out)
+            f.truncate()
+            f.flush()
+            os.fsync(f.fileno())
+
+            # PROVE it: each repaired entry must now recompute clean, and report where the whole chain
+            # stands (repairing one of several stale stamps leaves the others — say so, don't imply intact).
+            re_entries = rm.parse_entries(open(trace, encoding="utf-8").read())
+            re_exp = rm._expected_chains(re_entries)
+            by_id = {e.id: e for e in re_entries}
+            for tid, _j, _old, _new in plan:
+                e = by_id.get(tid)
+                if not e or e.chain != re_exp[e.id]:
+                    die(f"rechained {tid} but it still does not recompute clean — STOP and inspect the "
+                        "trace by hand before trusting the chain")
+            code, msg = rm.verify_chain(re_entries)
+            print(f"rechained {len(plan)} stamp(s); verify: " + ("intact" if code == 0 else msg))
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 def cmd_ingest(args):
@@ -1436,7 +1609,8 @@ COMMANDS = {"init": cmd_init, "config": cmd_config, "status": cmd_status,
             "append": cmd_append, "record": cmd_record, "id": cmd_id,
             "sessions": cmd_sessions, "mark": cmd_mark, "slug": cmd_slug, "pending": cmd_pending,
             "doctor": cmd_doctor, "ingest": cmd_ingest,
-            "map": cmd_map, "read": cmd_read, "scope": cmd_scope, "verify": cmd_verify}
+            "map": cmd_map, "read": cmd_read, "scope": cmd_scope, "verify": cmd_verify,
+            "rechain": cmd_rechain}
 
 
 def main():
