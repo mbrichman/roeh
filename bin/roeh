@@ -585,15 +585,11 @@ def _content_id(date_str, tag, lead):
     canonicalised (NFC + collapsed whitespace) so two implementations agree. Deterministic and
     decentralised — a producer can compute a TARGET's id (via `roeh id`) to reference it in a
     Supersedes:/Augments: edge without capturing the target's `record` output; the target must still be
-    recorded before the edge resolves (record refuses a dangling target). Immutable once written."""
-    import hashlib
-    import unicodedata
+    recorded before the edge resolves (record refuses a dangling target). Immutable once written.
 
-    def canon(s):
-        return unicodedata.normalize("NFC", re.sub(r"\s+", " ", s.strip()))
-
-    payload = "\x00".join([canon(date_str), tag.upper(), canon(lead)])
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    The algorithm lives ONCE, in roeh_map.content_id — the read-path core is the authority on entry
+    identity, so a reader deriving an id for an un-authored legacy entry lands on exactly this id."""
+    return _load_roeh_map().content_id(date_str, tag, lead)
 
 
 def _format_record(tag, lead, req, edges, cites, eid, atomic, d, hints, chain):
@@ -730,7 +726,7 @@ def cmd_record(args):
             # id. Reading the tail's stored chain is not enough: a legacy tail has none.
             prev = ""
             for e in entries:
-                prev = rm.chain_link(prev, e.id)
+                prev = rm.chain_link(prev, e.chain_id)   # chain_id, matching _expected_chains
             chain = rm.chain_link(prev, eid)
 
             block = _format_record(tag, lead, req, edges, cites, eid, atomic, d, hints, chain)

@@ -127,7 +127,10 @@ class ReviewFixes(unittest.TestCase):
         entries = rm.parse_entries(txt)
         return entries, {e.id: e for e in entries}, rm.compute_liveness(entries)
 
-    def test_1_missing_id_does_not_collapse_and_is_loud(self):
+    def test_1_unauthored_ids_are_derived_stable_and_servable(self):
+        """The reindex, reader-side: an entry with no authored id gets the CANONICAL content id
+        (the very id `roeh record` would assign), not an unstable placeholder — so a pre-v3 trace
+        is map-servable with zero file mutation, and a derived id is NOT a liveness gap."""
         txt = (
             "- **[DECISION] A thing.** WHY: x.\n"
             "  <!-- roeh class=decision atomic=true date=2026-01-01 -->\n"
@@ -136,10 +139,15 @@ class ReviewFixes(unittest.TestCase):
         )
         entries, _, (status, reasons) = self._live(txt)
         self.assertEqual(len(entries), 2)
-        self.assertEqual(len({e.id for e in entries}), 2)      # no collapse to status[""]
+        self.assertEqual(len({e.id for e in entries}), 2)          # distinct, no collapse
         for e in entries:
-            self.assertEqual(status[e.id], "uncertain")
-            self.assertIn("missing id", reasons[e.id])
+            self.assertTrue(e.derived_id)
+            self.assertRegex(e.id, r"^[0-9a-f]{16}$")              # canonical shape, not noid-L<line>
+            self.assertEqual(e.id, rm.content_id(e.date, e.tag, e.lead))
+            self.assertNotEqual(status[e.id], "uncertain")         # derived is servable, not a gap
+            self.assertNotIn("missing id", reasons.get(e.id, ""))
+        # Content-addressed, not position-addressed: a reparse yields the SAME ids.
+        self.assertEqual({e.id for e in rm.parse_entries(txt)}, {e.id for e in entries})
 
     def test_2_competing_successor_partial_conflict(self):
         txt = (
@@ -609,10 +617,14 @@ class Step5ReviewFixes(unittest.TestCase):
         self.assertEqual(r.kind, "region")               # the real region, not the reserved drill
         self.assertIn("z1", r.rendered)
 
-    def test_5_legacy_trace_diagnosis_note(self):
-        legacy = "".join("- **[DECISION] n%d.**\n" % k for k in range(5))   # no v3 metadata
-        self.assertIn("PRE-V3", rm.build_map(legacy).rendered)
-        self.assertNotIn("PRE-V3", rm.build_map(load()).rendered)           # a real v3 trace has ids
+    def test_5_legacy_trace_is_served_with_an_honest_derived_note(self):
+        legacy = "".join("- **[DECISION] n%d.**\n" % k for k in range(5))   # no authored ids
+        rendered = rm.build_map(legacy).rendered
+        self.assertNotIn("PRE-V3", rendered)                 # served now, not condemned
+        self.assertNotIn("do not trust", rendered)
+        self.assertNotIn("clean ingest", rendered)
+        self.assertIn("DERIVED", rendered)                   # honest: content-hashed, no chain
+        self.assertNotIn("DERIVED", rm.build_map(load()).rendered)   # a real v3 trace has authored ids
 
 
 class Step6ReviewFixes(unittest.TestCase):
@@ -645,12 +657,13 @@ class Step6ReviewFixes(unittest.TestCase):
         self.assertEqual(status["A"], "dead")    # already superseded → not re-surfaced as uncertain
         self.assertNotIn("augment lost", reasons.get("A", ""))
 
-    def test_5_legacy_note_collapses_the_missing_id_flood(self):
-        legacy = "".join("- **[DECISION] n%d here.**\n" % k for k in range(20))   # no v3 metadata
+    def test_5_a_legacy_flood_is_served_not_condemned(self):
+        legacy = "".join("- **[DECISION] n%d here.**\n" % k for k in range(20))   # no authored ids
         m = rm.build_map(legacy)
-        self.assertIn("PRE-V3", m.rendered)
-        self.assertIn("read @ledger", m.rendered)                # ledger collapsed to a manifest
-        self.assertLess(m.rendered.count("missing id"), 20)      # not 20 per-entry lines in the map
+        self.assertTrue(m.fits)                                   # the map builds and fits
+        self.assertIn("DERIVED", m.rendered)                     # one calm note...
+        self.assertEqual(m.rendered.count("missing id"), 0)      # ...not a flood of per-entry flags
+        self.assertNotIn("do not trust", m.rendered)
 
     def test_6_group_drill_is_recursively_bounded(self):
         txt = "".join(

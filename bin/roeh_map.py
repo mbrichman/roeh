@@ -49,6 +49,23 @@ def tokenize(text: str):
     return toks
 
 
+def content_id(date_str: str, tag: str, lead: str) -> str:
+    """The entry's content id — sha256(NFC(date) · TAG · NFC(lead))[:16], canonicalised.
+
+    The SINGLE source of truth for entry identity (like tokenize() for tokens): bin/roeh's
+    `roeh record` / `roeh id` delegate here, so the id a reader DERIVES for an un-authored
+    legacy entry is byte-identical to the id that entry would carry if it were recorded. That
+    is what lets a pre-v3 trace be served with zero file mutation."""
+    import hashlib
+    import unicodedata
+
+    def canon(s):
+        return unicodedata.normalize("NFC", re.sub(r"\s+", " ", s.strip()))
+
+    payload = "\x00".join([canon(date_str), tag.upper(), canon(lead)])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 @dataclass
 class Entry:
     id: str
@@ -59,9 +76,10 @@ class Entry:
     lead: str
     dialect: str
     line: int
-    missing_id: bool = False
+    derived_id: bool = False
     dup_id: bool = False
     chain: str = ""
+    chain_id: str = ""
     cites: List[str] = field(default_factory=list)
     supersedes: List[str] = field(default_factory=list)
     augments: List[str] = field(default_factory=list)
@@ -165,21 +183,35 @@ def parse_entries(text: str) -> List[Entry]:
         atomic = None
         if "atomic" in meta:
             atomic = meta["atomic"].lower() == "true"
-        # A missing id must NOT collapse every such entry into one phantom node (review finding #1,
-        # the trace's own worst failure). Assign a unique synthetic id and flag it loud.
+        # No AUTHORED id → derive the CANONICAL content id (the very id `roeh record` would
+        # assign), not a position-based placeholder. This is the reindex, done reader-side: a
+        # legacy / pre-v3 trace becomes map-servable with ZERO file mutation, because the reader
+        # supplies the id the producer never wrote. A derived entry is stable and fully servable;
+        # the one thing it lacks is a tamper-chain (chain=""), which verify skips — so it is
+        # served, just not chain-verified. (An earlier version assigned an unstable noid-L<line>
+        # id and flagged it loud as "missing", condemning a whole pre-v3 trace instead of serving
+        # it — and a position-based id also broke the moment any line above it shifted.)
         raw_id = meta.get("id", "")
-        missing = not raw_id
+        tag = m.group(2)
+        date = meta.get("date", "")
+        lead = _lead(lines[i])
+        derived = not raw_id
         entries.append(Entry(
-            id=raw_id or ("noid-L%d" % (i + 1)),
-            tag=m.group(2),
+            id=raw_id or content_id(date, tag, lead),
+            # chain_id keeps the ORIGINAL positional identity even for a derived entry, so the
+            # tamper-chain a prior `roeh record` stamped (folded over these ids) still reproduces.
+            # Separating served id (content hash, for the map) from chain id (position, for the
+            # chain) is what lets the reindex add ids without disturbing any stored chain.
+            chain_id=raw_id or ("noid-L%d" % (i + 1)),
+            tag=tag,
             cls=meta.get("class", ""),
             atomic=atomic,
-            date=meta.get("date", ""),
+            date=date,
             chain=meta.get("chain", ""),
-            lead=_lead(lines[i]),
+            lead=lead,
             dialect="tick" if m.group(1) == "`" else ("bold" if m.group(1) == "**" else "plain"),
             line=i + 1,
-            missing_id=missing,
+            derived_id=derived,
             cites=rels["cites"],
             supersedes=rels["supersedes"],
             augments=rels["augments"],
@@ -194,6 +226,16 @@ def parse_entries(text: str) -> List[Entry]:
         if counts.get(e.id, 0) > 1:      # explicit duplicate id — disambiguate + flag loud (review #5)
             e.dup_id = True
             e.id = "%s~dupL%d" % (e.id, e.line)
+    # Mirror the disambiguation onto chain_id so the tamper-chain fold stays byte-identical to the
+    # pre-derivation scheme (where the served id WAS the chain id). A duplicate AUTHORED id must fold
+    # under its disambiguated form, exactly as before — otherwise two entries sharing a hand-edited id
+    # would fold as one link. noid-L chain ids are line-unique, so only a genuine dup is ever touched.
+    ccounts = {}
+    for e in entries:
+        ccounts[e.chain_id] = ccounts.get(e.chain_id, 0) + 1
+    for e in entries:
+        if ccounts.get(e.chain_id, 0) > 1:
+            e.chain_id = "%s~dupL%d" % (e.chain_id, e.line)
     return entries
 
 
@@ -225,8 +267,9 @@ def compute_liveness(entries: List[Entry]) -> Tuple[Dict[str, str], Dict[str, st
         uncertain.setdefault(eid, []).append(msg)
 
     for e in entries:
-        if e.missing_id:
-            flag(e.id, "missing id (synthetic %s assigned)" % e.id)
+        # A DERIVED id (reader-supplied for an un-authored entry) is not a liveness gap: it is
+        # stable and servable, and its only caveat — no tamper-chain — is reported once at the
+        # trace level, not as per-entry uncertainty. Only genuine gaps flag here.
         if e.dup_id:
             flag(e.id, "duplicate id (disambiguated)")
         for name, targets in (("supersedes", e.supersedes),
@@ -535,13 +578,14 @@ def build_map(text, budget_tokens=1500, D=180, as_of=None, modified_paths=frozen
     entries = parse_entries(text)
     status, reasons = compute_liveness(entries)
     by_id = {e.id: e for e in entries}
-    # Legacy-trace diagnosis: if almost nothing carries a v3 id, say so ONCE, loudly, instead of a
-    # ledger full of per-entry "missing id" lines — the map is telling you to run a clean ingest
-    # (surfaced by dogfooding roeh's own pre-v3 trace).
-    missing = sum(1 for e in entries if e.missing_id)
-    note = ("⚠ %d/%d entries lack v3 metadata (no id) — this looks like a PRE-V3 trace; run a "
-            "clean ingest and do not trust the map as-is." % (missing, len(entries))
-            if entries and missing >= 0.8 * len(entries) else "")
+    # Legacy-trace diagnosis: when most entries carry a DERIVED id (reader-supplied, no authored
+    # chain), say so ONCE, calmly. The map SERVES them — this is not "run a clean ingest / don't
+    # trust", it is an honest note that they are content-hashed rather than chained.
+    derived = sum(1 for e in entries if e.derived_id)
+    note = ("ℹ %d/%d entries carry DERIVED ids (content-hashed from date+tag+lead; no authored "
+            "tamper-chain) — the map serves them normally; `roeh record` an entry to chain it."
+            % (derived, len(entries))
+            if entries and derived >= 0.8 * len(entries) else "")
     id_regions, region_ids = assign_regions(entries)
     inbound = _live_inbound(entries, id_regions, status)
     states = {r: ("hot" if r == "unclassified"      # unclassified is always hot, never retired
@@ -553,7 +597,9 @@ def build_map(text, budget_tokens=1500, D=180, as_of=None, modified_paths=frozen
         (r for r in region_ids if states[r] == "hot"),
         key=lambda r: (-sum(1 for i in region_ids[r] if status.get(i) == "live"), r))
     collapsed = set()
-    collapse_ledger = bool(note)     # a pre-v3 flood collapses to one note + a ledger manifest (round-6 #5)
+    # Derived ids no longer flood the ledger with per-entry flags, so the note never forces a
+    # collapse (an over-budget map still can, as a last resort below).
+    collapse_ledger = False
     while True:
         body, live_ids, ledger_ids, header_regions = _assemble(
             text, entries, by_id, status, reasons, id_regions, region_ids, states, collapsed,
@@ -893,9 +939,13 @@ def chain_link(prev: str, eid: str) -> str:
 
 
 def _expected_chains(entries):
+    # Fold over chain_id, not the served id: a derived entry's SERVED id is a content hash (so the
+    # map can serve it), but its chain identity stays the original positional id it was chained
+    # under. Keeping the two separate means adding derived ids for read-servability does not disturb
+    # an authored entry's stored chain — verify stays honest across the reindex.
     out, prev = {}, ""
     for e in entries:
-        prev = chain_link(prev, e.id)
+        prev = chain_link(prev, e.chain_id)
         out[e.id] = prev
     return out
 
