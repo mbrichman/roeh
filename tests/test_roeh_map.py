@@ -255,6 +255,35 @@ class Step2Map(unittest.TestCase):
         self.assertLessEqual(len(hdr_lines), rm.MAX_FANOUT)          # grouped, not 20 lines
         self.assertTrue(any(l.startswith("- group ") for l in hdr_lines))
 
+    def test_budget_collapse_scales_logarithmically(self):
+        # Regression: build_map once collapsed hot regions one at a time and RE-ASSEMBLED the whole
+        # body after each — O(regions) full assemblies, which ran for tens of minutes on a ~1200-region
+        # trace (it tripped the scribe watchdog). The collapse is now a binary search over a fixed
+        # prefix, so a many-region over-budget trace costs O(log regions) assemblies. Counting
+        # _assemble calls pins that without a flaky wall-clock timer — a revert to the linear walk
+        # would blow this bound (it would be ~N, not ~log N).
+        N = 300
+        text = "".join(
+            "- **[DECISION] decision number %d about thing %d.**\n"
+            "  <!-- roeh id=e%03d class=decision atomic=true date=2026-10-01 topic-hint=topic%03d -->\n"
+            % (k, k, k, k) for k in range(N))
+        calls = {"n": 0}
+        orig = rm._assemble
+        def counting(*a, **kw):
+            calls["n"] += 1
+            return orig(*a, **kw)
+        rm._assemble = counting
+        try:
+            m = rm.build_map(text, budget_tokens=1500, as_of="2026-10-02")
+        finally:
+            rm._assemble = orig
+        self.assertTrue(m.fits)                                    # a fitting prefix was found
+        self.assertGreater(len(m.collapsed), N // 2)               # it really was over budget
+        self.assertLess(calls["n"], 40,                            # ~log2(300)≈8; linear walk was ~N
+                        "budget collapse is not logarithmic — the O(regions) walk is back")
+        # Deterministic and byte-identical on a rebuild (orig restored, so this build is not counted).
+        self.assertEqual(rm.build_map(text, budget_tokens=1500, as_of="2026-10-02").rendered, m.rendered)
+
 
 class Step2ReviewFixes(unittest.TestCase):
     def test_1_fenced_example_not_parsed_as_edge(self):

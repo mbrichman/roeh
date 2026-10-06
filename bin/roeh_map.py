@@ -11,6 +11,7 @@ be unit-tested with no I/O, no git, and no model.
 
 import re
 import hashlib
+import functools
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import List, Dict, Optional, Tuple
@@ -478,7 +479,12 @@ def _group_regions(hdrs):
 
 
 def _assemble(text, entries, by_id, status, reasons, id_regions, region_ids, states, collapsed,
-              budget, collapse_ledger=False, pid="", note=""):
+              budget, collapse_ledger=False, pid="", note="", preamble=None):
+    # `preamble` is a pure function of `text` (invariant across the budget loop's re-assemblies), so
+    # build_map computes it ONCE and passes it in; recomputing it per collapse re-scanned the whole
+    # multi-MB trace every iteration (a large slice of this function's cost on a big trace).
+    if preamble is None:
+        preamble = _preamble(text)
     expanded = {r for r in region_ids if states[r] == "hot" and r not in collapsed}
     header_regions = {r for r in region_ids if states[r] in ("retired", "settled")} | set(collapsed)
 
@@ -553,7 +559,7 @@ def _assemble(text, entries, by_id, status, reasons, id_regions, region_ids, sta
         (["# roeh map — decision-trace   (region: ROOT)",
           "projection-id: %s   budget: %d tokens" % (pid, budget)]
          + ([note] if note else [])
-         + ["", "## preamble", _preamble(text),
+         + ["", "## preamble", preamble,
             "", "## live"]) + (live_lines or ["(none)"]) +
         ["", "## ledger"] + ledger_render +
         ["", "## regions"] + (region_lines or ["(none)"]))
@@ -596,26 +602,50 @@ def build_map(text, budget_tokens=1500, D=180, as_of=None, modified_paths=frozen
     hot_by_size = sorted(
         (r for r in region_ids if states[r] == "hot"),
         key=lambda r: (-sum(1 for i in region_ids[r] if status.get(i) == "live"), r))
-    collapsed = set()
     # Derived ids no longer flood the ledger with per-entry flags, so the note never forces a
     # collapse (an over-budget map still can, as a last resort below).
-    collapse_ledger = False
-    while True:
-        body, live_ids, ledger_ids, header_regions = _assemble(
-            text, entries, by_id, status, reasons, id_regions, region_ids, states, collapsed,
-            budget_tokens, collapse_ledger, pid, note)
-        if _est_tokens(body) <= budget_tokens:
-            return MapModel(body, True, live_ids, ledger_ids, header_regions,
-                            states, id_regions, region_ids, collapsed, blooms, pid)
-        remaining = [r for r in hot_by_size if r not in collapsed]
-        if remaining:
-            collapsed.add(remaining[0])
-            continue
-        if not collapse_ledger:
-            collapse_ledger = True         # last resort before giving up: collapse the ledger
-            continue
-        return MapModel(body, False, live_ids, ledger_ids, header_regions,
-                        states, id_regions, region_ids, collapsed, blooms, pid)
+    #
+    # The budget is met by collapsing a PREFIX of hot_by_size (largest-live-count first). Collapsing
+    # a hot region replaces its expanded live/dead lines with a single cold header, so the assembled
+    # size is non-increasing across that prefix — which means the minimal fitting prefix can be found
+    # by BINARY SEARCH (~log₂ n assemblies) instead of the old linear walk that re-assembled the
+    # entire body after every single collapse. On a ~1200-region trace that walk did ~1200 full
+    # re-assemblies and ran for tens of minutes (it tripped the scribe watchdog); the search does ~11.
+    # The collapse order and the resulting bytes are unchanged. A verify-and-fallback guards the one
+    # way the size curve can wrinkle — a tail of content-free regions (0 live, nothing to remove)
+    # whose header line adds a few tokens — by dropping back to the exact linear scan if the binary
+    # result is not the true left boundary, so the output stays byte-identical in every case.
+    pre = _preamble(text)
+    hot = hot_by_size
+
+    def assemble_prefix(k, collapse_ledger=False):
+        return _assemble(text, entries, by_id, status, reasons, id_regions, region_ids, states,
+                         set(hot[:k]), budget_tokens, collapse_ledger, pid, note, pre)
+
+    def fits(k):
+        return _est_tokens(assemble_prefix(k)[0]) <= budget_tokens
+
+    # Leftmost k in [0, len(hot)] whose assembly fits (None if even collapsing every hot region does
+    # not, without touching the ledger).
+    lo, hi, k = 0, len(hot), None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if fits(mid):
+            k, hi = mid, mid - 1
+        else:
+            lo = mid + 1
+    if k is not None and not (fits(k) and (k == 0 or not fits(k - 1))):
+        k = next((i for i in range(len(hot) + 1) if fits(i)), None)   # monotonicity perturbed → exact
+
+    if k is not None:
+        body, live_ids, ledger_ids, header_regions = assemble_prefix(k)
+        return MapModel(body, True, live_ids, ledger_ids, header_regions,
+                        states, id_regions, region_ids, set(hot[:k]), blooms, pid)
+
+    # Nothing fits without the ledger → last resort: collapse the ledger too (all hot collapsed).
+    body, live_ids, ledger_ids, header_regions = assemble_prefix(len(hot), collapse_ledger=True)
+    return MapModel(body, _est_tokens(body) <= budget_tokens, live_ids, ledger_ids, header_regions,
+                    states, id_regions, region_ids, set(hot), blooms, pid)
 
 
 # ─── step 3: the per-region Bloom literal-existence index ──────────────────────
@@ -637,12 +667,18 @@ SEGMENT_TOKENS = 500     # fixed segment granularity — a projection constant, 
                          # regardless of the display budget used to view it (review #7)
 
 
+@functools.lru_cache(maxsize=1_000_000)
 def _positions(token: str, m: int, k: int):
+    # k sha256 bit-positions for one token. Pure in (token, m, k) — and building a region's bloom,
+    # then re-building its segments' blooms (subdivide_for_saturation re-tests the same tokens at
+    # every split level), hashes the same tokens over and over. Memoising collapses that from
+    # millions of sha256 calls to one per distinct token (the blooms produced are byte-identical).
+    # A tuple so the cached value is never mutated by a caller (both callers only iterate it).
     out = []
     for i in range(k):
         h = hashlib.sha256(("%d:%s" % (i, token)).encode("utf-8")).digest()
         out.append(int.from_bytes(h[:8], "big") % m)
-    return out
+    return tuple(out)
 
 
 def bloom_of_tokens(tokens, m: int = BLOOM_M, k: int = BLOOM_K) -> int:
@@ -665,11 +701,21 @@ def _fpr(density: float, k: int) -> float:
     return density ** k
 
 
-def _region_token_set(rids, by_id):
+def _region_token_set(rids, by_id, cache=None):
+    # `cache` (entry id → token set) is shared across one build_blooms pass so an entry tokenized for
+    # its region is not tokenized again for each saturation-split test and each final segment it lands
+    # in. The cached set is only read (unioned into `toks`), never mutated. None → no sharing (callers
+    # outside the bloom build get the original behaviour).
     toks = set()
     for i in rids:
         if i in by_id:
-            toks |= tokenize(by_id[i].text)   # full entry text → richest literal index
+            if cache is None:
+                toks |= tokenize(by_id[i].text)   # full entry text → richest literal index
+            else:
+                t = cache.get(i)
+                if t is None:
+                    t = cache[i] = tokenize(by_id[i].text)
+                toks |= t
     return toks
 
 
@@ -680,14 +726,15 @@ def build_blooms(by_id, region_ids, m: int = BLOOM_M, k: int = BLOOM_K, F: float
     This is what actually EXERCISES the saturation guard (review #4): a guard never called is not
     a guard. No false negatives either way, since a segment's bloom still ORs its tokens."""
     out = {}
+    tcache = {}      # entry id → tokens, reused across regions, split tests and segments this pass
     for r, rids in region_ids.items():
-        toks = _region_token_set(rids, by_id)
+        toks = _region_token_set(rids, by_id, tcache)
         b = bloom_of_tokens(toks, m, k)
         d = _density(b, m)
         fpr = _fpr(d, k)
         if fpr > F and len(rids) > 1:
-            for i, seg in enumerate(subdivide_for_saturation(rids, by_id, m, k, F)):
-                st = _region_token_set(seg, by_id)
+            for i, seg in enumerate(subdivide_for_saturation(rids, by_id, m, k, F, tcache)):
+                st = _region_token_set(seg, by_id, tcache)
                 sb = bloom_of_tokens(st, m, k)
                 sd = _density(sb, m)
                 out["%s/%d" % (r, i)] = {
@@ -713,13 +760,14 @@ def scope_literal(query: str, blooms) -> set:
     return hits
 
 
-def subdivide_for_saturation(rids, by_id, m: int = BLOOM_M, k: int = BLOOM_K, F: float = SATURATION_FPR):
+def subdivide_for_saturation(rids, by_id, m: int = BLOOM_M, k: int = BLOOM_K, F: float = SATURATION_FPR,
+                             cache=None):
     """Chronologically halve a region until each segment's bloom FPR ≤ F (or is a singleton), so no
     filter saturates into a match-everything drill trap. Deterministic; returns a partition of rids."""
     ents = sorted((by_id[i] for i in rids if i in by_id), key=lambda e: (e.date, e.id))
 
     def fpr_of(sub):
-        return _fpr(_density(bloom_of_tokens(_region_token_set([e.id for e in sub], by_id), m, k), m), k)
+        return _fpr(_density(bloom_of_tokens(_region_token_set([e.id for e in sub], by_id, cache), m, k), m), k)
 
     def split(sub):
         if len(sub) <= 1 or fpr_of(sub) <= F:
