@@ -42,8 +42,9 @@ Same rules as `/roeh:ingest`, scoped to the delta. **Dispatch commit and memory 
 on `sonnet`** — it is bounded extraction, same as ingest. Session mining inherits.
 
 - **Commits** — mine inline comments and docstrings for rationale, not the subject lines.
-- **Transcripts** — distil to the owner's turns only; the assistant's own text is never a
-  source (hall of mirrors). `roeh mark <id>` each one you fold in.
+- **Transcripts** — `roeh turns <id>` gives the owner's turns only (do not write an
+  extractor); the assistant's own text is never a source (hall of mirrors). `roeh mark <id>`
+  each one you fold in.
 - **Memory files** — fold changes into §2 and note any that now contradict §2's existing
   digest.
 

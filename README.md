@@ -393,6 +393,7 @@ roeh record [-]                      APPEND one structured entry (JSON on stdin)
 roeh id [-]                          compute an entry's content-id, without writing
 roeh append [file|-]                 APPEND raw text — the low-level write primitive
 roeh sessions [--unmined]            this project's transcripts
+roeh turns <session-id> [--json]     the owner's typed turns only (mining input)
 roeh mark <session-id>               record a transcript as folded in
 roeh ingest status|begin|done|end|abandon
                                      ingest lifecycle (see below)

@@ -185,11 +185,13 @@ mining will be weaker than the rest and the owner should know which pass to dist
 Transcripts hold real-time rationale and abandoned roads that never reach a commit
 message. They are the richest vein and the most dangerous one.
 
-1. Transcripts are large (tens of MB). **Distil first, never read raw.** Strip tool
-   inputs, tool results, file-history and meta events.
-2. Then distil again, to **the owner's turns only**, each with a short snippet of what it
-   responded to for context.
-3. **Source rule — inherited from `agents/scribe.md`.** A FACT — a measurement, an
+1. Transcripts are large (tens of MB). **Never read raw, and never write your own
+   extractor.** `roeh turns <session-id>` emits **the owner's typed turns only** — tool
+   results, slash-command echoes, skill bodies, compaction summaries, task notifications,
+   peer-session messages and pasted text already stripped; prompts typed mid-run (stored
+   only as attachments) already recovered. Each turn carries `responds_to`, a short tail of
+   the assistant text it answered: **context for reading a terse turn, never a source.**
+2. **Source rule — inherited from `agents/scribe.md`.** A FACT — a measurement, an
    invariant, what-is-true — comes only from the owner's turns, the commits, or the code:
    never from the assistant's own text (the hall-of-mirrors failure — the record feeds
    itself its own reflection and reads it back as fact), and never from text the owner
@@ -202,7 +204,7 @@ message. They are the richest vein and the most dangerous one.
    refuses it). The tag marks it an observation, the citation marks its weight.
    That is the difference between keeping a hard-won lesson and losing it — never for a fact,
    never for pasted text.
-4. `roeh mark <session-id>` for each transcript folded in, so `/roeh:refresh` stays
+3. `roeh mark <session-id>` for each transcript folded in, so `/roeh:refresh` stays
    incremental.
 
 ## Phase 3 — canonical-sequence, resolve edges, then `roeh record`

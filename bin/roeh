@@ -18,6 +18,8 @@ Subcommands:
   id        compute an entry's content-id (JSON on stdin) WITHOUT writing —
             for referencing an edge target before it is recorded
   sessions  list this project's Claude Code transcripts, mined or not
+  turns     the owner's typed turns from a transcript — tool output, harness
+            echoes, notifications and pasted text stripped (mining input)
   slug      compute the Claude Code project-directory slug for a path
   mark      record that a session/commit has been folded into the trace
   doctor    check this project's artifacts against the running plugin
@@ -858,6 +860,158 @@ def cmd_sessions(args):
         print(f"{r[2]:8} {r[1]//1024:>7}KB  {r[0]}  {r[3]}")
 
 
+# ── owner-turn extraction: the mechanical half of session mining ──
+# Every mining pass needs "what did the owner actually type", and `role: user` is NOT that: user
+# records also carry tool results, slash-command echoes and their stdout, skill bodies, compaction
+# summaries (assistant prose), task notifications and peer-session messages. Left to each session,
+# that filter gets re-derived per run and wrong in a new way each time — so it lives here, once,
+# tested. Judgement (what in the stream is a decision) stays with the scribe.
+
+# Harness wrappers that open a user record which nobody typed.
+_HARNESS_WRAPPERS = ("<local-command-caveat>", "<local-command-stdout>", "<local-command-stderr>",
+                     "<bash-stdout>", "<bash-stderr>", "<system-reminder>", "<task-notification>",
+                     "<cross-session-message", "<user-prompt-submit-hook>")
+_HARNESS_PREFIXES = ("[Request interrupted by user", "Another Claude session sent a message",
+                     "This session is being continued from a previous conversation")
+# Blocks spliced INTO a typed turn: pasted text is not the owner's words (the source rule drops it),
+# a reminder is the harness's. Keep a marker so the scribe knows something stood there.
+_SPLICED = ((re.compile(r"<pasted_content\b[^>]*>.*?</pasted_content>", re.S), "[pasted content omitted]"),
+            (re.compile(r"<system-reminder>.*?</system-reminder>", re.S), ""))
+_CMD_RE = re.compile(r"<command-name>\s*(.*?)\s*</command-name>", re.S)
+_ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.S)
+_BASH_RE = re.compile(r"<bash-input>(.*?)</bash-input>", re.S)
+
+
+def _record_text(content):
+    """The text blocks of a message's content, or None if it carries a tool result."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return None
+    if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+        return None
+    return "\n".join(b.get("text", "") for b in content
+                     if isinstance(b, dict) and b.get("type") == "text")
+
+
+def _classify_typed(text):
+    """(kind, text) for text a human could have typed, or None for harness output. A slash command
+    or `!` shell line is an owner ACTION, normalised to how it was typed; everything else that opens
+    with a harness wrapper is dropped."""
+    s = text.strip()
+    m = _CMD_RE.search(s)
+    if m and s.startswith(("<command-name>", "<command-message>")):
+        a = _ARGS_RE.search(s)
+        return "command", (m.group(1) + (" " + a.group(1).strip() if a and a.group(1).strip() else ""))
+    m = _BASH_RE.search(s)
+    if m and s.startswith("<bash-input>"):
+        return "command", "! " + m.group(1).strip()
+    if s.startswith(_HARNESS_WRAPPERS) or s.startswith(_HARNESS_PREFIXES):
+        return None
+    for rx, repl in _SPLICED:
+        s = rx.sub(repl, s)
+    s = s.strip()
+    return ("prompt", s) if s else None
+
+
+def _claude_code_turns(lines, context_chars):
+    """Owner turns from a Claude Code transcript (JSONL). Where a record carries `origin.kind`
+    (newer CLIs) that is authoritative — only `human` is the owner; `task-notification` and `peer`
+    are not. Older records lack it, so they fall back to `_classify_typed`. Prompts typed while the
+    model was busy are stored ONLY as `queued_command` attachments, never as a user record — a
+    `role: user` filter silently loses them."""
+    out, last_assistant, seen_queued = [], "", set()
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(r, dict) or r.get("isSidechain"):
+            continue
+        typ, ts = r.get("type"), r.get("timestamp", "")
+        if typ == "assistant":
+            t = _record_text((r.get("message") or {}).get("content"))
+            if t and t.strip():
+                last_assistant = t.strip()
+            continue
+        if typ == "attachment":
+            a = r.get("attachment") or {}
+            if (a.get("type") != "queued_command" or a.get("commandMode") != "prompt"
+                    or a.get("isMeta") or (a.get("origin") or {}).get("kind", "human") != "human"):
+                continue
+            text, ts = a.get("prompt"), a.get("timestamp", ts)
+            queued = True
+        elif typ == "user":
+            if r.get("isMeta") or r.get("isCompactSummary") or "toolUseResult" in r:
+                continue
+            kind = (r.get("origin") or {}).get("kind")
+            if kind is not None and kind != "human":
+                continue
+            text, queued = _record_text((r.get("message") or {}).get("content")), False
+        else:
+            continue
+        if not isinstance(text, str):
+            continue
+        c = _classify_typed(text)
+        if c is None:
+            continue
+        if queued:
+            seen_queued.add(c[1])
+        elif c[1] in seen_queued:  # a CLI that also echoes the dequeued prompt — keep one copy
+            continue
+        turn = {"ts": ts, "kind": c[0], "text": c[1], "queued": queued}
+        if context_chars and last_assistant:
+            snip = last_assistant[-context_chars:]
+            turn["responds_to"] = ("…" if len(last_assistant) > context_chars else "") + snip
+        out.append(turn)
+    return out
+
+
+TRANSCRIPT_PARSERS = {"claude-code": _claude_code_turns}  # the host seam: add a parser per host
+
+
+def owner_turns(path, host="claude-code", context_chars=200):
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return TRANSCRIPT_PARSERS[host](f, context_chars)
+
+
+def cmd_turns(args):
+    """Emit the owner's typed turns from one or more session transcripts — the CLEAN input to
+    session mining. `responds_to` is the tail of the assistant's preceding text: CONTEXT for reading
+    a terse turn ("push it"), never a source (hall of mirrors)."""
+    ctx = opt_value(args, "--context", "200")
+    if not ctx.isdigit():
+        die("--context takes a character count (0 disables)")
+    path = opt_value(args, "--path")
+    ids = [a for i, a in enumerate(args)
+           if not a.startswith("-") and (i == 0 or args[i - 1] not in ("--context", "--path"))]
+    targets = []
+    if path:
+        if not os.path.isfile(path):
+            die(f"no transcript at {path}")
+        targets.append((os.path.basename(path).rsplit(".jsonl", 1)[0], path))
+    if ids:
+        sessions = sessions_for(load_config())
+        for sid in ids:
+            match = [s for s in sessions if s["id"].startswith(sid)]
+            if len(match) != 1:
+                die(f"{'no' if not match else 'ambiguous'} session matching {sid}")
+            targets.append((match[0]["id"], match[0]["path"]))
+    if not targets:
+        die("usage: roeh turns <session-id>... | --path FILE  [--context N] [--json]")
+    result = [{"session": sid, "turns": owner_turns(p, context_chars=int(ctx))} for sid, p in targets]
+    if "--json" in args:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+    for s in result:
+        print(f"── session {s['session']} — {len(s['turns'])} owner turn(s)")
+        for t in s["turns"]:
+            if t.get("responds_to"):
+                print("   ↳ re: " + " ".join(t["responds_to"].split()))
+            mark = " (queued)" if t["queued"] else ""
+            print(f"[{t['ts'][:16].replace('T', ' ')}]{mark} {t['text']}\n")
+
+
 def cmd_mark(args):
     """Record that a session has been folded in, so refresh stays incremental."""
     cfg = load_config()
@@ -1607,7 +1761,7 @@ def cmd_pending(args):
 
 COMMANDS = {"init": cmd_init, "config": cmd_config, "status": cmd_status,
             "append": cmd_append, "record": cmd_record, "id": cmd_id,
-            "sessions": cmd_sessions, "mark": cmd_mark, "slug": cmd_slug, "pending": cmd_pending,
+            "sessions": cmd_sessions, "turns": cmd_turns, "mark": cmd_mark, "slug": cmd_slug, "pending": cmd_pending,
             "doctor": cmd_doctor, "ingest": cmd_ingest,
             "map": cmd_map, "read": cmd_read, "scope": cmd_scope, "verify": cmd_verify,
             "rechain": cmd_rechain}

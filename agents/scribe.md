@@ -138,7 +138,8 @@ Your job is compression with citations, not authorship.
 1. **The owner's own turns** — the highest-value source, and the only one that can
    establish intent. Quote verbatim wherever they stated a rationale, made a call, or
    rejected an option. A `[DECISION — owner]` carrying their exact words outranks any
-   amount of your reconstruction.
+   amount of your reconstruction. Get them from a transcript with `roeh turns <session-id>`
+   — never by reading it raw or writing an extractor; `responds_to` is context, not a source.
 2. **PR body, review verdict, Oracle verdict** — `gh pr view <N>`,
    `gh pr view <N> --comments`, `gh pr diff <N>`. Review findings are where `[LESSON]`
    and `[GOTCHA]` entries come from.
