@@ -1242,7 +1242,9 @@ class TestDoctor(RoehCase):
         self.git("add", "-A", "-f")
         self.git("commit", "-qm", "add trace")
         self.write(".gitignore", ".claude/roeh-state.json\n"
-                                 ".claude/roeh-pending.json\n")
+                                 ".claude/roeh-pending.json\n"
+                                 "docs/decision-trace-map.md\n"
+                                 "docs/decision-trace-bloom.json\n")
         self.roeh("ingest", "begin", "--plan", "C1")
         self.roeh("ingest", "done", "C1")
         self.roeh("ingest", "end")
@@ -1257,6 +1259,32 @@ class TestDoctor(RoehCase):
         code, out, _ = self.roeh("doctor")
         self.assertEqual(code, 0, out)
         self.assertIn("ingest complete", out)
+
+    def test_healthy_project_reports_the_derived_map_ignored(self):
+        self.healthy()
+        self.assertIn("derived map gitignored", self.roeh("doctor")[1])
+
+    def test_flags_and_fixes_an_unignored_derived_map(self):
+        """A committed map is stale at every commit (HEAD is a projection input), so the map and
+        bloom must be ignored; --fix adds the lines, and a re-run is clean."""
+        self.healthy()
+        self.write(".gitignore", ".claude/roeh-state.json\n.claude/roeh-pending.json\n")
+        _, out, _ = self.roeh("doctor")
+        self.assertIn("derived map not gitignored", out)
+        self.roeh("doctor", "--fix")
+        self.assertIn("docs/decision-trace-bloom.json", self.read(".gitignore"))
+        self.assertIn("derived map gitignored", self.roeh("doctor")[1])
+
+    def test_flags_a_committed_derived_map_and_leaves_the_index_alone(self):
+        self.healthy()
+        self.write("docs/decision-trace-map.md", "# map\n")
+        self.git("add", "-f", "docs/decision-trace-map.md")
+        self.git("commit", "-qm", "commit the map")
+        _, out, _ = self.roeh("doctor", "--fix")
+        self.assertIn("derived map is committed: docs/decision-trace-map.md", out)
+        self.assertIn("git rm --cached docs/decision-trace-map.md", out)
+        self.assertTrue(self.git("ls-files", "--error-unmatch", "docs/decision-trace-map.md").stdout,
+                        "--fix must not untrack — that rewrites the owner's index")
 
     def test_detects_missing_required_sections(self):
         """§0 and §5 are required of EVERY trace (legacy or v3) — §5 is what a
