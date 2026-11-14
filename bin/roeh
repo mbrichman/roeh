@@ -19,7 +19,8 @@ Subcommands:
             for referencing an edge target before it is recorded
   sessions  list this project's Claude Code transcripts, mined or not
   turns     the owner's typed turns from a transcript — tool output, harness
-            echoes, notifications and pasted text stripped (mining input)
+            echoes, notifications and pasted text stripped (mining input);
+            --save writes each session to its own file and prints the path
   slug      compute the Claude Code project-directory slug for a path
   mark      record that a session/commit has been folded into the trace
   doctor    check this project's artifacts against the running plugin
@@ -41,6 +42,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 
 # `roeh read` emits large output that is routinely piped (`| head`, `| less`). Restore the default
@@ -975,10 +977,57 @@ def owner_turns(path, host="claude-code", context_chars=200):
         return TRANSCRIPT_PARSERS[host](f, context_chars)
 
 
+def _render_turns(s):
+    """One session's turns as text. The FIRST line names the session — the cheap check that a
+    saved file holds the session you asked for."""
+    lines = [f"── session {s['session']} — {len(s['turns'])} owner turn(s)"]
+    for t in s["turns"]:
+        if t.get("responds_to"):
+            lines.append("   ↳ re: " + " ".join(t["responds_to"].split()))
+        mark = " (queued)" if t["queued"] else ""
+        lines.append(f"[{t['ts'][:16].replace('T', ' ')}]{mark} {t['text']}\n")
+    return "\n".join(lines) + "\n"
+
+
+def turns_dir():
+    """Where `roeh turns --save` writes: per-user, OUTSIDE any repo (owner turns are private and
+    must never be one `git add -A` from a commit). ROEH_TURNS_DIR overrides it."""
+    d = os.environ.get("ROEH_TURNS_DIR") or os.path.join(
+        tempfile.gettempdir(), f"roeh-turns-{os.getuid()}")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    return d
+
+
+def _save_turns(s, as_json, ctx):
+    """Write one session's turns to a file whose NAME is derived from the session id, atomically
+    (temp file + rename), and return its path. Why roeh names the file and not the caller:
+    parallel miners share their parent session's scratchpad, and each picked its own generic name
+    (`turns.txt`, `t.txt`) for the large output — so they clobbered each other and mined the wrong
+    session's history (two consecutive downstream refreshes, 2026-11-12/13). A name keyed on the
+    session id cannot collide across sessions, and the rename means two writers on the SAME session
+    never leave a torn file."""
+    suffix = ("" if ctx == "200" else f".ctx{ctx}") + (".json" if as_json else ".txt")
+    path = os.path.join(turns_dir(), s["session"] + suffix)
+    body = (json.dumps([s], indent=2, ensure_ascii=False) + "\n") if as_json else _render_turns(s)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(body)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    return path
+
+
 def cmd_turns(args):
     """Emit the owner's typed turns from one or more session transcripts — the CLEAN input to
     session mining. `responds_to` is the tail of the assistant's preceding text: CONTEXT for reading
-    a terse turn ("push it"), never a source (hall of mirrors)."""
+    a terse turn ("push it"), never a source (hall of mirrors).
+
+    `--save` writes each session to its own roeh-named file and prints only the paths — use it
+    whenever the output is too big to read inline, and ALWAYS when miners run in parallel."""
     ctx = opt_value(args, "--context", "200")
     if not ctx.isdigit():
         die("--context takes a character count (0 disables)")
@@ -998,18 +1047,18 @@ def cmd_turns(args):
                 die(f"{'no' if not match else 'ambiguous'} session matching {sid}")
             targets.append((match[0]["id"], match[0]["path"]))
     if not targets:
-        die("usage: roeh turns <session-id>... | --path FILE  [--context N] [--json]")
+        die("usage: roeh turns <session-id>... | --path FILE  [--context N] [--json] [--save]")
     result = [{"session": sid, "turns": owner_turns(p, context_chars=int(ctx))} for sid, p in targets]
+    if "--save" in args:
+        for s in result:
+            p = _save_turns(s, "--json" in args, ctx)
+            print(f"{s['session']}\t{len(s['turns'])} owner turn(s)\t{p}")
+        return
     if "--json" in args:
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return
     for s in result:
-        print(f"── session {s['session']} — {len(s['turns'])} owner turn(s)")
-        for t in s["turns"]:
-            if t.get("responds_to"):
-                print("   ↳ re: " + " ".join(t["responds_to"].split()))
-            mark = " (queued)" if t["queued"] else ""
-            print(f"[{t['ts'][:16].replace('T', ' ')}]{mark} {t['text']}\n")
+        sys.stdout.write(_render_turns(s))
 
 
 def cmd_mark(args):

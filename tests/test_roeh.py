@@ -101,6 +101,8 @@ class RoehCase(unittest.TestCase):
         e = dict(os.environ)
         e["HOME"] = self.home          # keeps ~/.claude out of reach
         e.pop("CLAUDE_PROJECT_DIR", None)
+        # `roeh turns --save` writes here, never the real temp dir.
+        e["ROEH_TURNS_DIR"] = os.path.join(self.root, "turns")
         if extra:
             e.update(extra)
         return e
@@ -887,6 +889,75 @@ class TestTurns(RoehCase):
         code, out, err = self.roeh("turns", "--path", p)
         self.assertEqual(code, 0, err)
         self.assertIn("by path", out)
+
+    def saved(self, out):
+        """Parse `--save` stdout: one `session<TAB>count<TAB>path` line per session."""
+        return [ln.split("\t") for ln in out.strip().splitlines()]
+
+    def test_save_writes_a_session_named_file_and_prints_only_the_path(self):
+        self.make_session("s1", json.dumps(self.u("hello one")) + "\n")
+        _, inline, _ = self.roeh("turns", "s1")
+        code, out, err = self.roeh("turns", "s1", "--save")
+        self.assertEqual(code, 0, err)
+        [(sid, count, path)] = self.saved(out)
+        self.assertEqual((sid, count), ("s1", "1 owner turn(s)"))
+        self.assertEqual(os.path.basename(path), "s1.txt")
+        self.assertNotIn("hello one", out)          # the body goes to the file, not stdout
+        with open(path) as f:
+            body = f.read()
+        self.assertEqual(body, inline)              # same bytes as the inline form
+        self.assertTrue(body.startswith("── session s1 "))
+
+    def test_save_json_and_nondefault_context_get_distinct_names(self):
+        self.make_session("s1", json.dumps(self.u("hi")) + "\n")
+        _, out, _ = self.roeh("turns", "s1", "--save", "--json")
+        [(_, _, pj)] = self.saved(out)
+        _, out, _ = self.roeh("turns", "s1", "--save", "--context", "0")
+        [(_, _, p0)] = self.saved(out)
+        self.assertEqual(os.path.basename(pj), "s1.json")
+        self.assertEqual(os.path.basename(p0), "s1.ctx0.txt")
+        with open(pj) as f:
+            self.assertEqual(json.load(f)[0]["session"], "s1")
+
+    def test_default_save_dir_is_outside_the_repo(self):
+        """Owner turns are private: the default must never land where `git add -A` reaches."""
+        self.make_session("s1", json.dumps(self.u("hi")) + "\n")
+        tmp = os.path.join(self.root, "tmp")
+        os.makedirs(tmp)
+        e = self.env({"TMPDIR": tmp})
+        e.pop("ROEH_TURNS_DIR")
+        p = subprocess.run([sys.executable, ROEH, "turns", "s1", "--save"], cwd=self.dir,
+                           capture_output=True, text=True, env=e)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        [(_, _, path)] = self.saved(p.stdout)
+        self.assertTrue(path.startswith(tmp + os.sep), path)
+        self.assertFalse(path.startswith(self.dir + os.sep))
+
+    def test_parallel_saves_never_cross_sessions(self):
+        """The bug this exists for: parallel miners shared a scratchpad and each saved to a name
+        it chose (`turns.txt`), so the last writer won and the others mined the wrong session.
+        Run many sessions at once — twice each, to exercise same-session racing — and every file
+        must hold its own session, whole."""
+        ids = [f"sess{i}" for i in range(8)]
+        for sid in ids:
+            self.make_session(sid, "".join(json.dumps(self.u(f"from {sid} #{n}")) + "\n"
+                                           for n in range(200)))
+        procs = [subprocess.Popen([sys.executable, ROEH, "turns", sid, "--save"], cwd=self.dir,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                  env=self.env())
+                 for sid in ids * 2]
+        for sid, pr in zip(ids * 2, procs):
+            out, err = pr.communicate()
+            self.assertEqual(pr.returncode, 0, err)
+            [(got, _, path)] = self.saved(out)
+            self.assertEqual(got, sid)
+            with open(path) as f:
+                body = f.read()
+            self.assertTrue(body.startswith(f"── session {sid} — 200 owner turn(s)"))
+            self.assertEqual(body.count(f"from {sid} #"), 200)
+            self.assertNotIn("from sess", body.replace(f"from {sid} #", ""))
+        leftovers = [n for n in os.listdir(os.path.join(self.root, "turns")) if n.startswith(".tmp-")]
+        self.assertEqual(leftovers, [])
 
 
 class TestRechain(RoehCase):

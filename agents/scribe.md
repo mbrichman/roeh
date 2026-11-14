@@ -140,6 +140,7 @@ Your job is compression with citations, not authorship.
    rejected an option. A `[DECISION — owner]` carrying their exact words outranks any
    amount of your reconstruction. Get them from a transcript with `roeh turns <session-id>`
    — never by reading it raw or writing an extractor; `responds_to` is context, not a source.
+   **Too big to read inline? `roeh turns <id> --save`** — it writes the session to a file roeh names after the session id and prints that path; read the file at that path. Never redirect `roeh turns` into a file you name yourself (`> turns.txt`): parallel miners share one scratchpad, so a generic name gets overwritten by another miner and you mine the wrong session's history.
 2. **PR body, review verdict, Oracle verdict** — `gh pr view <N>`,
    `gh pr view <N> --comments`, `gh pr diff <N>`. Review findings are where `[LESSON]`
    and `[GOTCHA]` entries come from.

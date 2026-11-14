@@ -44,7 +44,10 @@ on `sonnet`** — it is bounded extraction, same as ingest. Session mining inher
 - **Commits** — mine inline comments and docstrings for rationale, not the subject lines.
 - **Transcripts** — `roeh turns <id>` gives the owner's turns only (do not write an
   extractor); the assistant's own text is never a source (hall of mirrors). `roeh mark <id>`
-  each one you fold in.
+  each one you fold in. Session miners run in parallel, so tell each one to use
+  `roeh turns <id> --save` and read the path it prints, **never** `roeh turns <id> > <file>`.
+  Parallel miners share one scratchpad, so a file name they pick themselves gets overwritten
+  by another miner, and they mine the wrong session's history.
 - **Memory files** — fold changes into §2 and note any that now contradict §2's existing
   digest.
 

@@ -191,6 +191,7 @@ message. They are the richest vein and the most dangerous one.
    peer-session messages and pasted text already stripped; prompts typed mid-run (stored
    only as attachments) already recovered. Each turn carries `responds_to`, a short tail of
    the assistant text it answered: **context for reading a terse turn, never a source.**
+   **Too big to read inline? `roeh turns <id> --save`** — it writes the session to a file roeh names after the session id and prints that path; read the file at that path. Never redirect `roeh turns` into a file you name yourself (`> turns.txt`): parallel miners share one scratchpad, so a generic name gets overwritten by another miner and you mine the wrong session's history.
 2. **Source rule — inherited from `agents/scribe.md`.** A FACT — a measurement, an
    invariant, what-is-true — comes only from the owner's turns, the commits, or the code:
    never from the assistant's own text (the hall-of-mirrors failure — the record feeds
